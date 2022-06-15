@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from modeling import BertModel
 
@@ -95,7 +96,14 @@ class GraphConvolution(nn.Module):
         else:
             self.register_parameter('bias', None)
         self.dropout = nn.Dropout(0.1)
+        
+        self.init_parameters()
 
+    def init_parameters(self):
+        torch.nn.init.xavier_uniform_(self.weight)
+        stdv = 1. / math.sqrt(self.bias.shape[0])
+        torch.nn.init.uniform_(self.bias, a=-stdv, b=stdv)
+            
     def forward(self, text, adj1, adj2):
         adj = adj1 + adj2
         adj[adj>=1]=1
