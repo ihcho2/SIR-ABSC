@@ -139,10 +139,10 @@ if __name__ == '__main__':
     process('./datasets/acl-14-short-data/test.raw',edge_vocab,False)
     
     edge_vocab=process('./datasets/semeval14/restaurants/restaurant_train.raw',None,True)
-    process('./datasets/semeval14/restaurants/3way/restaurant_test.raw',edge_vocab,False)
+    process('./datasets/semeval14/restaurants/restaurant_test.raw',edge_vocab,False)
     
     edge_vocab=process('./datasets/semeval14/laptops/laptop_train.raw',None,True)
-    process('./datasets/semeval14/laptops/3way/laptop_test.raw',edge_vocab,False)
+    process('./datasets/semeval14/laptops/laptop_test.raw',edge_vocab,False)
     
 #     edge_vocab=process('./datasets/semeval15/restaurant_train.raw',None,True)
 #     process('./datasets/semeval15/restaurant_test.raw',edge_vocab,False)
