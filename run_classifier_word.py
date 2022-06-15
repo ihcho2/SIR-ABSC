@@ -478,7 +478,7 @@ class Instructor:
         if self.opt.do_predict:
             test_accuracy = self.do_predict()
             print("Test Set Accuracy: {}".format(test_accuracy))
-        print("Max validate Set Acc: {0}".format(self.max_test_acc))  # Output the final test accuracy
+        print("Max validate Set Acc: {0}, F1: {1}".format(self.max_test_acc, self.max_test_f1))  # Output the final test accuracy
         self.writer.close()
         # return self.max_test_acc
         return self.max_test_f1
