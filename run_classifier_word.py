@@ -105,7 +105,6 @@ class Instructor:
             self.model = BertForSequenceClassification(bert_config, len(self.dataset.label_list))
         else:
             self.model = model_classes[args.model_name](bert_config, args)
-            # self._reset_params()
 
         if args.init_checkpoint is not None:
             self.model.bert.load_state_dict(torch.load(args.init_checkpoint, map_location='cpu'))
@@ -139,37 +138,30 @@ class Instructor:
                                     for n, param in self.model.named_parameters()]
         else:
             self.param_optimizer = list(self.model.named_parameters())
+            
         no_decay = ['bias', 'gamma', 'beta']
         optimizer_grouped_parameters = [
-            {'params': [p for n, p in self.param_optimizer if n not in no_decay],
+            {'params': [p for n, p in self.param_optimizer if n not in no_decay and n.startswith('bert')],
              'weight_decay_rate': 0.01},
-            {'params': [p for n, p in self.param_optimizer if n in no_decay],
+            {'params': [p for n, p in self.param_optimizer if n in no_decay and n.startswith('bert')],
              'weight_decay_rate': 0.0}
         ]
+        
         self.optimizer = BERTAdam(optimizer_grouped_parameters,
                                   lr=args.learning_rate,
                                   warmup=args.warmup_proportion,
                                   t_total=self.num_train_steps)
-        # 配置自己模型的优化器
-        #[p for pname, p in self.param_optimizer if not pname.startswith('module.bert')]
-#         self.optimizer_gcn = torch.optim.Adam(
-#             [{'params': [p for pname, p in self.param_optimizer if not pname.startswith('module.bert')]}], lr=0.001,
-#             weight_decay=0)
+        
+        # creating optimizer for gcn
+        self.optimizer_gcn = torch.optim.Adam(
+            [{'params': [p for pname, p in self.param_optimizer if not pname.startswith('bert')]}], lr=0.001,
+            weight_decay=0.00001)
 #         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_gcn, mode='max',
 #                                                   patience=3)  # After 3 epochs, the learning rate is automatically adjusted when the monitored value stops increasing
 
         self.global_step = 0  # 初始化全局步数为 0
         self.max_test_acc = 0
         self.max_test_f1 = 0
-
-    def _reset_params(self):
-        for p in self.model.parameters():
-            if p.requires_grad:
-                if len(p.shape) > 1:
-                    self.opt.initializer(p)
-                else:
-                    stdv = 1. / math.sqrt(p.shape[0])
-                    torch.nn.init.uniform_(p, a=-stdv, b=stdv)
                     
     def do_train(self):  # 训练模型
         # for _ in trange(int(args.num_train_epochs), desc="Epoch"):
@@ -183,9 +175,12 @@ class Instructor:
             nb_tr_examples, nb_tr_steps = 0, 0
             y_pred = []
             y_true = []
-            self.model.train()  # 让模型处于训练状态，因为每跑完一个epoch就会处于测试状态
             for step, batch in enumerate(tqdm(self.dataset.train_dataloader, desc="Training")):
                 # batch = tuple(t.to(self.opt.device) for t in batch)
+                self.model.train()
+                self.optimizer.zero_grad()
+                self.optimizer_gcn.zero_grad()
+                
                 input_ids, input_mask, segment_ids, label_ids, \
                 input_t_ids, input_t_mask, segment_t_ids, \
                 input_without_t_ids, input_without_t_mask, segment_without_t_ids, \
@@ -286,6 +281,7 @@ class Instructor:
                         copy_optimizer_params_to_model(self.model.named_parameters(), self.param_optimizer)
                     else:
                         self.optimizer.step()
+                        self.optimizer_gcn.step()
                         # self.optimizer_me.step()
                     self.model.zero_grad()
                     self.global_step += 1
@@ -293,7 +289,6 @@ class Instructor:
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
                     result = self.do_eval()  # 每跑完一轮，测试一次
-                    self.model.train()
                     tr_loss = tr_loss / nb_tr_steps
                     # self.scheduler.step(result['eval_accuracy'])  # 监测验证集的精度
                     self.writer.add_scalar('train_loss', tr_loss, i_epoch)
@@ -526,14 +521,6 @@ if __name__ == "__main__":
         'dtd_bert': DTD_BERT,
     }
     args.model_class = model_classes[args.model_name.lower()]
-    
-    initializers = {
-        'xavier_uniform_': torch.nn.init.xavier_uniform_,
-        'xavier_normal_': torch.nn.init.xavier_normal,
-        'orthogonal_': torch.nn.init.orthogonal_,
-    }
-    
-    args.initializer = initializers[args.initializer]
 
     if args.local_rank == -1 or args.no_cuda:  # if use multiple Gpus or no Gpus
         args.device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
