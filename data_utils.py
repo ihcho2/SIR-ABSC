@@ -255,12 +255,12 @@ class ABSADatesetReader:
                 'test': './datasets/acl-14-short-data/test.raw'
             },
             'rest14': {
-                'train': './datasets/semeval14/restaurants/3way/restaurant_train.raw',
-                'test': './datasets/semeval14/restaurants/3way/restaurant_test.raw'
+                'train': './datasets/semeval14/restaurants/restaurant_train.raw',
+                'test': './datasets/semeval14/restaurants/restaurant_test.raw'
             },
             'lap14': {
-                'train': './datasets/semeval14/laptops/3way/laptop_train.raw',
-                'test': './datasets/semeval14/laptops/3way/laptop_test.raw'
+                'train': './datasets/semeval14/laptops/laptop_train.raw',
+                'test': './datasets/semeval14/laptops/laptop_test.raw'
             },
             'rest15': {
                 'train': './datasets/semeval15/restaurant_train.raw',
