@@ -68,7 +68,9 @@ class ReadData:
             DGEDT_data = self.DGEDT_test_data    # 점검용
         
         batch_size_ = DGEDT_batches['text_indices'].size(0)
+        
         all_input_ids_org = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+        assert all_input_ids_org.size(0) == batch_size_
         ##############################
         all_input_ids = DGEDT_batches['text_indices']
         for i in range(batch_size_):
