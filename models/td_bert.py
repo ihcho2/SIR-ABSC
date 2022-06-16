@@ -115,7 +115,57 @@ class GraphConvolution(nn.Module):
             return output + self.bias
         else:
             return output
+        
+class BiGraphConvolution(nn.Module):
+    """
+    Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
+    """
+    def __init__(self, in_features, out_features, bias=True):
+        super(BiGraphConvolution, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        self.weight2 = nn.Parameter(torch.FloatTensor(in_features, out_features))
+        self.weight3 = nn.Parameter(torch.FloatTensor(2*out_features, out_features))
+        
+        if bias:
+            self.bias = nn.Parameter(torch.FloatTensor(out_features))
+            self.bias2 = nn.Parameter(torch.FloatTensor(out_features))
+            self.bias3 = nn.Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+            self.register_parameter('bias2', None)
+            self.register_parameter('bias3', None)
             
+        self.dropout = nn.Dropout(0.1)
+        
+        self.init_parameters()
+
+    def init_parameters(self):
+        torch.nn.init.xavier_uniform_(self.weight)
+        torch.nn.init.xavier_uniform_(self.weight2)
+        torch.nn.init.xavier_uniform_(self.weight3)
+        stdv = 1. / math.sqrt(self.bias.shape[0])
+        torch.nn.init.uniform_(self.bias, a=-stdv, b=stdv)
+        stdv = 1. / math.sqrt(self.bias2.shape[0])
+        torch.nn.init.uniform_(self.bias2, a=-stdv, b=stdv)
+        stdv = 1. / math.sqrt(self.bias3.shape[0])
+        torch.nn.init.uniform_(self.bias3, a=-stdv, b=stdv)
+            
+    def forward(self, text, adj1, adj2):
+        hidden = torch.matmul(text, self.weight)
+        hidden2 = torch.matmul(text, self.weight2)
+        denom1 = torch.sum(adj1, dim=2, keepdim=True)+1
+        denom2 = torch.sum(adj2, dim=2, keepdim=True)+1
+        
+        output = F.relu(torch.matmul(adj1, hidden) / denom1 + self.bias)
+        output2 = F.relu(torch.matmul(adj2, hidden2) /denom2 + self.bias2)
+        
+        output3 = torch.matmul(torch.cat((output,output2), dim=-1), self.weight3) + self.bias3
+        
+        return output3
+        
+        
 class TD_BERT_with_GCN(nn.Module):
     def __init__(self, config, opt):
         super(TD_BERT_with_GCN, self).__init__()
@@ -125,14 +175,30 @@ class TD_BERT_with_GCN(nn.Module):
         embedding_dim = opt.embed_dim  
         output_dim = opt.output_dim  # Output dimension, here is 3, representing negative, neutral, positive respectively
         self.bert = BertModel(config)
-        self.gcn1 = GraphConvolution(768, opt.gcn_hidden_dim)
-        self.gcn2 = GraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
-        self.gcn3 = GraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
+        if opt.bigcn == str(True):
+            print('-'*77)
+            print('Using BiGCN')
+            print('-'*77)
+            self.gcn1 = BiGraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
+            self.gcn2 = BiGraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
+            self.gcn3 = BiGraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
+        else:
+            print('-'*77)
+            print('Using GCN')
+            print('-'*77)
+            self.gcn1 = GraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
+            self.gcn2 = GraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
+            self.gcn3 = GraphConvolution(opt.gcn_hidden_dim, opt.gcn_hidden_dim)
+            
         self.dropout = nn.Dropout(opt.keep_dropout)
         self.fc = nn.Linear(embedding_dim+opt.gcn_hidden_dim, output_dim)
-        # self.fc = nn.Linear(len(filter_sizes) * n_filters, output_dim)  # fully connected layer tc_cnn
-        # self.bn1 = nn.BatchNorm1d(output_dim)
-
+        self.weight = nn.Parameter(torch.FloatTensor(768, opt.gcn_hidden_dim))
+        
+        self.init_parameters()
+    
+    def init_parameters(self):
+        torch.nn.init.xavier_uniform_(self.weight)
+        
     def forward(self, input_ids, token_type_ids, attention_mask, labels=None, input_t_ids=None, input_t_mask=None,
                 segment_t_ids=None, input_left_ids=None, input_left_mask=None, segment_left_ids=None, dg= None, dg1=None, tran_indices=None, span_indices=None):
         all_encoder_layers, _ = self.bert(input_ids, token_type_ids, attention_mask)
@@ -161,9 +227,10 @@ class TD_BERT_with_GCN(nn.Module):
                 tmps[i,j]=torch.sum(sentence_embed[i,span[0]+1:span[1]+1],0)
                 
         gcn_text = self.dropout(tmps)
-        gcn_text=F.relu(self.gcn1(gcn_text, dg, dg1))
-        gcn_text=F.relu(self.gcn2(gcn_text, dg, dg1))
-        gcn_text=F.relu(self.gcn3(gcn_text, dg, dg1))
+        gcn_text = F.relu(torch.matmul(gcn_text, self.weight))
+        gcn_text=self.dropout(F.relu(self.gcn1(gcn_text, dg, dg1))) + gcn_text
+        gcn_text=self.dropout(F.relu(self.gcn2(gcn_text, dg, dg1))) + gcn_text
+        gcn_text=self.dropout(F.relu(self.gcn3(gcn_text, dg, dg1))) + gcn_text
         
         gcn_target_embed = torch.zeros(input_ids.size()[0], gcn_text.size()[-1]).float().to(self.opt.device)
         for i in range(input_ids.size()[0]):
@@ -172,6 +239,7 @@ class TD_BERT_with_GCN(nn.Module):
             
         gcn_cat = self.dropout(gcn_target_embed)
                              
+        # Concatenate the output of BERT and GCN.
         concatenated_embed = torch.cat((cat, gcn_cat), dim=1)
         
         logits = self.fc(concatenated_embed)
