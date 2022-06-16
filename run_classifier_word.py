@@ -472,11 +472,11 @@ class Instructor:
         print('>' * 100)
         if self.opt.do_predict:
             test_accuracy = self.do_predict()
-            print("Test Set Accuracy: {}".format(test_accuracy))
-        print("Max validate Set Acc: {0}, F1: {1}".format(self.max_test_acc, self.max_test_f1))  # Output the final test accuracy
+            print("Test Set Accuracy: {:.4f}".format(test_accuracy))
+        print("Max validate Set Acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc, self.max_test_f1))  # Output the final test accuracy
         self.writer.close()
         # return self.max_test_acc
-        return self.max_test_f1
+        return self.max_test_acc, self.max_test_f1
 
 
 if __name__ == "__main__":
@@ -554,10 +554,10 @@ if __name__ == "__main__":
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
     ins = Instructor(args)
-    max_test_acc = ins.run()
+    max_test_acc, max_test_f1 = ins.run()
 
     with open('result.txt', 'a', encoding='utf-8') as f:
-        f.write(str(max_test_acc)+'\n')
+        f.write(str(max_test_acc)+ ',' + str(max_test_f1) + '\n')
 
 
     # result = []
