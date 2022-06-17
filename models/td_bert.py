@@ -255,54 +255,6 @@ class TD_BERT_with_GCN(nn.Module):
             return loss, logits
         else:
             return logits
-
-class BERT_FC_TD(nn.Module):
-    def __init__(self, config, opt):
-        super(BERT_FC_TD, self).__init__()
-        self.opt = opt
-        n_filters = opt.n_filters  # The number of convolution kernels
-        filter_sizes = opt.filter_sizes  # Convolution kernel size, multiple sizes are passed as a list
-        embedding_dim = opt.embed_dim  
-        output_dim = opt.output_dim  # Output dimension, here is 3, representing negative, neutral, positive respectively
-        self.bert = BertModel(config)
-            
-        self.dropout = nn.Dropout(opt.keep_dropout)
-        self.bert_fc = nn.Linear(2*embedding_dim, output_dim)
-        
-    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, input_t_ids=None, input_t_mask=None,
-                segment_t_ids=None, input_left_ids=None, input_left_mask=None, segment_left_ids=None, dg= None, dg1=None, tran_indices=None, span_indices=None):
-        all_encoder_layers, pooled_output = self.bert(input_ids, token_type_ids, attention_mask)
-        sentence_embed = all_encoder_layers[-1]  # Use the last layer of encoding results for classification
-        # sentence_embed = sum(all_encoder_layers)  # All layers are superimposed, I have tried it, the effect is not good, the convergence is slow, and the upper limit is low
-        
-                
-        target_in_sent_embed = torch.zeros(input_ids.size()[0], sentence_embed.size()[-1]).to(
-            self.opt.device)  # The embedding vector of the target word in the sentence
-        left_len = torch.sum(input_left_ids != 0, dim=-1) - 1  # Note that there are [CLS] and [SEP] at the beginning and end
-        target_len = torch.sum(input_t_ids != 0, dim=1) - 2  # Note that there are [CLS] and [SEP] at the beginning and end
-        target_in_sent_idx = torch.cat([left_len.unsqueeze(-1), (left_len + target_len).unsqueeze(-1)], dim=-1)
-
-        for i in range(input_ids.size()[0]):  # iterate over each of the batches
-            target_embed = sentence_embed[i][target_in_sent_idx[i][0]:target_in_sent_idx[i][1]]  # batch_size * max_seq_len * embedding_dim
-            target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]  # Converted to 1 * embedding_dim, taking the maximum value is the best (max_pooling)
-            # target_in_sent_embed[i] = target_embed.sum(dim=0)  # sum
-            # target_in_sent_embed[i] = torch.mean(target_embed, dim=0)[0]  # average
-
-        cat = self.dropout(target_in_sent_embed)       # TD output
-        pooled_output = self.dropout(pooled_output)    # CLS output
-                             
-        # Concatenate the output of BERT and GCN.
-        concatenated_embed = torch.cat((pooled_output, cat), dim=1)
-        
-        logits = self.bert_fc(concatenated_embed)
-        logits = torch.tanh(logits)
-        if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()  # Standard cross-entropy loss function
-            # loss_fct = CrossEntropyLoss_LSR(device=self.opt.device, para_LSR=self.opt.para_LSR)  # Loss function after label smoothing，para_LSR The interval is 0.1~0.9
-            loss = loss_fct(logits, labels)
-            return loss, logits
-        else:
-            return logits
         
 class BERT_FC_GCN(nn.Module):
     def __init__(self, config, opt):
