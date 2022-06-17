@@ -7,6 +7,7 @@ import numpy as np
 
 from data_utils import *
 from bucket_iterator import BucketIterator
+from bucket_iterator_2 import BucketIterator_2
 import pickle
 
 def length2mask(length,maxlength):
@@ -41,8 +42,8 @@ class ReadData:
             
         absa_dataset=pickle.load(open(dgedt_dataset+'_datas.pkl', 'rb'))
         opt.edge_size=len(absa_dataset.edgevocab)
-        self.train_data_loader = BucketIterator(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True)
-        self.test_data_loader = BucketIterator(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False)
+        self.train_data_loader = BucketIterator_2(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True)
+        self.test_data_loader = BucketIterator_2(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False)
         
         self.DGEDT_train_data = self.train_data_loader.data
         self.DGEDT_train_batches = self.train_data_loader.batches
@@ -88,18 +89,21 @@ class ReadData:
         ##############################
         text_len = torch.sum(DGEDT_batches['text_indices'] != 0, dim=-1)
         all_input_mask = length2mask(text_len, DGEDT_batches['text_indices'].size(1))
-        for i in range(batch_size_):
-            assert torch.sum(all_input_mask[i]!=0) == len(DGEDT_data[i]['text_indices'])
+#         for i in range(batch_size_):
+#             assert torch.sum(all_input_mask[i]!=0) == len(DGEDT_data[i]['text_indices'])
         ##############################
         
         
         
         all_segment_ids_org = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
         ##############################
-        all_segment_ids = all_segment_ids_org
-        # No change. Just zeros with size 128. 
-        # For changes later (e.g., token_b, token_c etc.) should be made in DGEDT's codes.
-        ##############################
+        all_segment_ids = all_segment_ids_org  # all zeroes of size 128.
+        
+        ########## When target is appended at the end or the beginning.
+        for i in range(batch_size_):
+            x = (all_input_ids[i] == 102).nonzero(as_tuple=True)[0]
+            all_segment_ids[i][x[0]+1:x[1]+1] = 1
+        ##########
         
         
         
@@ -186,8 +190,8 @@ class ReadData:
             input_left_ids[i][aspect_start_idx] = 102    # [SEP]
             
         # 점검
-        for i in range(batch_size_):
-            assert all_input_ids[i][list(input_left_ids[i]).index(102)] == all_input_t_ids[i][1]
+#         for i in range(batch_size_):
+#             assert all_input_ids[i][list(input_left_ids[i]).index(102)] == all_input_t_ids[i][1]
         ##############################
         
         
