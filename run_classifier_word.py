@@ -28,6 +28,9 @@ import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
 from data_utils import *
+from transformers import BertTokenizer
+
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
@@ -110,22 +113,25 @@ class Instructor:
             self.model.bert.load_state_dict(torch.load(args.init_checkpoint, map_location='cpu'))
         if args.fp16:
             self.model.half()
-        # 冻结参数
-        # for name, p in self.model.named_parameters():
-        #     if name.startswith('bert.encoder.layer.11') or name.startswith('bert.encoder.layer.10') or name.startswith('bert.encoder.layer.9') or name.startswith('bert.encoder.layer.8'):  # 冻结最后一层
-        #         p.requires_grad = False
-        # 计算模型的参数个数
-        n_trainable_params, n_nontrainable_params = 0, 0
-        for p in self.model.parameters():
-            n_params = torch.prod(torch.tensor(p.shape))  # torch.prod()表示计算所有元素的乘积
-            if p.requires_grad:  # 是否需要求梯度
-                n_trainable_params += n_params
-            else:
+            
+#         if args.model_name == 'gcn_only_with_bert_embedding':    # Freeze the BERT model and train only the GCN module.
+#             for name, p in self.model.named_parameters():
+#                 if name.startswith('bert'):
+#                     p.requires_grad = False
+            
+        n_trainable_params_bert, n_trainable_params_gcn, n_nontrainable_params = 0, 0, 0
+        for n, p in self.model.named_parameters():
+            n_params = torch.prod(torch.tensor(p.shape)) 
+            if p.requires_grad and n.startswith('bert'):
+                n_trainable_params_bert += n_params
+            elif p.requires_grad and n.startswith('bert') == False:
+                n_trainable_params_gcn += n_params
+            elif p.requires_grad == False:
                 n_nontrainable_params += n_params
-        print('n_trainable_params: {0}, n_nontrainable_params: {1}'.format(n_trainable_params, n_nontrainable_params))
+        print('n_BERT_trainable_params: {0}, n_GCN_trainable_params: {1}, n_nontrainable_params: {2}'.format(n_trainable_params_bert, n_trainable_params_gcn, n_nontrainable_params))
+            
         self.model.to(args.device)
 
-        # 并行化
         if self.opt.n_gpu > 1:
             self.model = torch.nn.DataParallel(self.model, device_ids=self.opt.gpu_id)
 
@@ -140,25 +146,54 @@ class Instructor:
             self.param_optimizer = list(self.model.named_parameters())
             
         no_decay = ['bias', 'gamma', 'beta']
-        optimizer_grouped_parameters = [
-            {'params': [p for n, p in self.param_optimizer if n not in no_decay and n.startswith('bert')],
-             'weight_decay_rate': 0.01},
-            {'params': [p for n, p in self.param_optimizer if n in no_decay and n.startswith('bert')],
-             'weight_decay_rate': 0.0}
-        ]
+        if args.model_name in ['td_bert', 'fc']:
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.param_optimizer if n not in no_decay],
+                 'weight_decay_rate': 0.01},
+                {'params': [p for n, p in self.param_optimizer if n in no_decay],
+                 'weight_decay_rate': 0.0}
+            ]
+            
+            self.optimizer = BERTAdam(optimizer_grouped_parameters,
+                                      lr=args.learning_rate,
+                                      warmup=args.warmup_proportion,
+                                      t_total=self.num_train_steps)
+            
+            self.optimizer_gcn = None
         
-        self.optimizer = BERTAdam(optimizer_grouped_parameters,
-                                  lr=args.learning_rate,
-                                  warmup=args.warmup_proportion,
-                                  t_total=self.num_train_steps)
-        
-        # creating optimizer for gcn
-        self.optimizer_gcn = torch.optim.Adam(
-            [{'params': [p for pname, p in self.param_optimizer if not pname.startswith('bert')]}], lr=0.001,
-            weight_decay=0.00001)
-#         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_gcn, mode='max',
-#                                                   patience=3)  # After 3 epochs, the learning rate is automatically adjusted when the monitored value stops increasing
-
+        elif args.model_name in ['td_bert_with_gcn']:
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.param_optimizer if n not in no_decay and n.startswith('bert')],
+                 'weight_decay_rate': 0.01},
+                {'params': [p for n, p in self.param_optimizer if n in no_decay and n.startswith('bert')],
+                 'weight_decay_rate': 0.0}
+            ]
+            
+            optimizer_grouped_parameters_names_bert = [
+                {'params': [n for n, p in self.param_optimizer if n not in no_decay and n.startswith('bert')],
+                 'weight_decay_rate': 0.01},
+                {'params': [n for n, p in self.param_optimizer if n in no_decay and n.startswith('bert')],
+                 'weight_decay_rate': 0.0}
+            ]
+            
+            print('-'*77)
+            print('names of parameters in the BERTAdam optimizer: ')
+            print(optimizer_grouped_parameters_names_bert)
+            
+            self.optimizer = BERTAdam(optimizer_grouped_parameters,
+                                      lr=args.learning_rate,
+                                      warmup=args.warmup_proportion,
+                                      t_total=self.num_train_steps)
+            
+            print('names of parameters in the Adam optimizer: ')
+            optimizer_grouped_parameters_names_gcn= {'params': [pname for pname, p in self.param_optimizer if not pname.startswith('bert')]}
+            print(optimizer_grouped_parameters_names_gcn)
+            print('-'*77)
+            
+            self.optimizer_gcn = torch.optim.Adam(
+                [{'params': [p for pname, p in self.param_optimizer if not pname.startswith('bert')]}], lr=0.001,
+                weight_decay=0.00001)    
+            
         self.global_step = 0  # 初始化全局步数为 0
         self.max_test_acc = 0
         self.max_test_f1 = 0
@@ -179,7 +214,8 @@ class Instructor:
                 # batch = tuple(t.to(self.opt.device) for t in batch)
                 self.model.train()
                 self.optimizer.zero_grad()
-                self.optimizer_gcn.zero_grad()
+                if self.optimizer_gcn != None:
+                    self.optimizer_gcn.zero_grad()
                 
                 input_ids, input_mask, segment_ids, label_ids, \
                 input_t_ids, input_t_mask, segment_t_ids, \
@@ -188,7 +224,12 @@ class Instructor:
                 input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
                 input_left_ids, input_left_mask, segment_left_ids, \
                 all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids = batch
-
+                
+#                 print('-'*77)
+#                 print(tokenizer.convert_ids_to_tokens(input_ids[0]))
+#                 print(segment_ids[0])
+#                 print(input_mask[0])
+                
                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
                 input_mask = input_mask.to(self.opt.device)
@@ -281,7 +322,8 @@ class Instructor:
                         copy_optimizer_params_to_model(self.model.named_parameters(), self.param_optimizer)
                     else:
                         self.optimizer.step()
-                        self.optimizer_gcn.step()
+                        if self.optimizer_gcn != None:
+                            self.optimizer_gcn.step()
                         # self.optimizer_me.step()
                     self.model.zero_grad()
                     self.global_step += 1
