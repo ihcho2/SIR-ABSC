@@ -137,7 +137,6 @@ def get_config():
     
     ###### By Cho & Jung
     parser.add_argument('--gcn_data_dir', type=str, default='dataset/Restaurants')
-    parser.add_argument('--vocab_dir', type=str, default='./datasets/semeval14/laptops/3way')
     parser.add_argument('--glove_dir', type=str, default='./datasets/glove')
     parser.add_argument('--emb_dim', type=int, default=300, help='Word embedding dimension.')
     parser.add_argument('--post_dim', type=int, default=30, help='Position embedding dimension.')
@@ -149,7 +148,7 @@ def get_config():
     
     parser.add_argument('--gcn_dropout', type=float, default=0.1, help='GCN layer dropout rate.')
     parser.add_argument('--lower', default=True, help='Lowercase all words.')
-    parser.add_argument('--direct', default=False)
+    parser.add_argument('--bigcn', default=False)
     parser.add_argument('--loop', default=True)
     parser.add_argument('--bidirect', default=True, help='Do use bi-RNN layer.')
     parser.add_argument('--rnn_hidden', type=int, default=50, help='RNN hidden state size.')
