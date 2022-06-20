@@ -18,11 +18,11 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from tensorboardX import SummaryWriter
-from modeling import BertConfig, BertForSequenceClassification
+from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_GCLS
 from optimization import BERTAdam
 
 from configs import get_config
-from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN
+from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
 from utils.data_util import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
@@ -86,7 +86,7 @@ class Instructor:
         # if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         #     raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
         # os.makedirs(args.output_dir, exist_ok=True)
-
+        
         self.dataset = ReadData(self.opt)  # Read the data and preprocess it
         self.num_train_steps = None
         self.num_train_steps = int(len(
@@ -99,6 +99,10 @@ class Instructor:
         self.eval_tran_indices = self.dataset.eval_tran_indices
         self.eval_span_indices = self.dataset.eval_span_indices
         
+        if args.model_name in ['gcls']:
+            self.train_gcls_attention_mask = self.dataset.train_gcls_attention_mask
+            self.eval_gcls_attention_mask = self.dataset.eval_gcls_attention_mask
+
         
         print("label size: {}".format(args.output_dim))
 
@@ -106,6 +110,8 @@ class Instructor:
         print("initialize model ...")
         if args.model_class == BertForSequenceClassification:
             self.model = BertForSequenceClassification(bert_config, len(self.dataset.label_list))
+        elif args.model_class == BertForSequenceClassification_GCLS:
+            self.model = BertForSequenceClassification_GCLS(bert_config, len(self.dataset.label_list))
         else:
             self.model = model_classes[args.model_name](bert_config, args)
 
@@ -146,7 +152,7 @@ class Instructor:
             self.param_optimizer = list(self.model.named_parameters())
             
         no_decay = ['bias', 'gamma', 'beta']
-        if args.model_name in ['td_bert', 'fc']:
+        if args.model_name in ['td_bert', 'fc', 'gcls']:
             optimizer_grouped_parameters = [
                 {'params': [p for n, p in self.param_optimizer if n not in no_decay],
                  'weight_decay_rate': 0.01},
@@ -161,7 +167,7 @@ class Instructor:
             
             self.optimizer_gcn = None
         
-        elif args.model_name in ['td_bert_with_gcn']:
+        elif args.model_name in ['td_bert_with_gcn', 'bert_fc_gcn']:
             optimizer_grouped_parameters = [
                 {'params': [p for n, p in self.param_optimizer if n not in no_decay and n.startswith('bert')],
                  'weight_decay_rate': 0.01},
@@ -227,8 +233,9 @@ class Instructor:
                 
 #                 print('-'*77)
 #                 print(tokenizer.convert_ids_to_tokens(input_ids[0]))
-#                 print(segment_ids[0])
-#                 print(input_mask[0])
+#                 print('aspect: ', tokenizer.convert_ids_to_tokens(input_t_ids[0]))
+#                 print('segment_ids: ', segment_ids[0])
+#                 print('input_mask: ', input_mask[0])
                 
                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
@@ -237,12 +244,17 @@ class Instructor:
                 
                 tran_indices = []
                 span_indices = []
+                gcls_attention_mask = []
                 for item in all_input_guids:
                     tran_indices.append(self.train_tran_indices[item])
                     span_indices.append(self.train_span_indices[item])
-
+                    if self.opt.model_name in ['gcls']:
+                        gcls_attention_mask.append(self.train_gcls_attention_mask[item])
+                    
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, gcls_attention_mask, label_ids)
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -271,7 +283,7 @@ class Instructor:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids,
                                                   input_t_ids, input_t_mask, segment_t_ids,
                                                   input_left_ids, input_left_mask, segment_left_ids)
-                    elif self.opt.model_class in [TD_BERT_with_GCN]:
+                    elif self.opt.model_class in [TD_BERT_with_GCN, BERT_FC_GCN]:
                         input_left_ids = input_left_ids.to(self.opt.device)
                         input_left_mask = input_left_mask.to(self.opt.device)
                         segment_left_ids = segment_left_ids.to(self.opt.device)
@@ -367,13 +379,17 @@ class Instructor:
             
             tran_indices = []
             span_indices = []
+            gcls_attention_mask = []
             for item in all_input_guids:
                 tran_indices.append(self.eval_tran_indices[item])
                 span_indices.append(self.eval_span_indices[item])
-                
+                if self.opt.model_name in ['gcls']:
+                    gcls_attention_mask.append(self.eval_gcls_attention_mask[item])                
             with torch.no_grad():  # 不计算梯度
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, gcls_attention_mask, label_ids)
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -403,7 +419,7 @@ class Instructor:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids,
                                                   input_t_ids, input_t_mask, segment_t_ids,
                                                   input_left_ids, input_left_mask, segment_left_ids)
-                    elif self.opt.model_class in [TD_BERT_with_GCN]:
+                    elif self.opt.model_class in [TD_BERT_with_GCN, BERT_FC_GCN]:
                         input_left_ids = input_left_ids.to(self.opt.device)
                         input_left_mask = input_left_mask.to(self.opt.device)
                         segment_left_ids = segment_left_ids.to(self.opt.device)
@@ -524,7 +540,7 @@ class Instructor:
 if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
     args = get_config()  # Gets the user settings or default hyperparameters
-
+    
     processors = {
         "restaurant": RestaurantProcessor,
         "laptop": LaptopProcessor,
@@ -559,6 +575,8 @@ if __name__ == "__main__":
         'aen': AEN_BERT,
         'td_bert': TD_BERT,
         'td_bert_with_gcn': TD_BERT_with_GCN,
+        'gcls': BertForSequenceClassification_GCLS,
+        'bert_fc_gcn': BERT_FC_GCN,
         'td_bert_qa': TD_BERT_QA,
         'dtd_bert': DTD_BERT,
     }
