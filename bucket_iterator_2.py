@@ -21,23 +21,14 @@ class BucketIterator_2(object):
             self.other=[item for item in other if len(item['text_indices'])<100 ]
             random.shuffle(self.other)
             self.batches = self.sort_and_pad(data, batch_size, self.other)
-#            self.others=self.sort_and_pad([], batch_size, self.other)
         else:
             self.other=None
             self.batches = self.sort_and_pad(self.data, batch_size, max_seq_length = self.max_seq_length, max_len = dg_max_len)
         
         self.batch_len = len(self.batches)
-#    def combine(self):
-#        random.shuffle(self.other)
-#        for i in range(self.batch_len):
-#            batches[i]
+        
     def sort_and_pad(self, data, batch_size, max_seq_length, other=None, max_len=None):
-#        data=[item for item in data if len(item['text_indices'])<100 ]
         num_batch = int(math.ceil(len(data) / batch_size))
-
-#        if self.sort:
-#            sorted_data = sorted(data, key=lambda x: len(x[self.sort_key]))
-#        else:
         sorted_data = data
         if other is not None:
             num_k = int(math.ceil(len(other) / batch_size))    
@@ -85,8 +76,16 @@ class BucketIterator_2(object):
                 item['polarity'], item['dependency_graph'],item['text'], item['aspect']
             
             ########### Appending target at the end
-            text_indices = text_indices + aspect_indices[1:]
-            # text_indices = text_indices + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+            
+#             text_indices = [101] + text_indices
+#             text_indices = [101] + text_indices + aspect_indices[1:]
+            
+#             text_indices = text_indices + aspect_indices[1:] \
+#             + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:] \
+#             + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('aspect is ')) + aspect_indices[1:] \
+#             + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('what do you think of ')) + aspect_indices[1:]
+            
+            text_indices = [101] + text_indices + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
             # fix the segment_ids in utils/data_util.py
             ###########
             
@@ -94,7 +93,6 @@ class BucketIterator_2(object):
             # text_indices = aspect_indices + text_indices[1:]
             # fix the segment_ids in utils/data_util.py
             ###########
-            
             
             text_padding = [0] * (max_len - len(text_indices))
             context_padding = [0] * (max_len - len(context_indices))
