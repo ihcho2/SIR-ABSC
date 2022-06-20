@@ -9,6 +9,9 @@ from data_utils import *
 from bucket_iterator import BucketIterator
 from bucket_iterator_2 import BucketIterator_2
 import pickle
+from transformers import BertTokenizer
+
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 def length2mask(length,maxlength):
     size=list(length.size())
@@ -51,12 +54,115 @@ class ReadData:
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
         
+        if opt.model_name in ['gcls']:
+            self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, opt.gcls_length)
+            self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data, opt.gcls_length)
+        
+        
         
         ######################
         
         self.train_data, self.train_dataloader, self.train_tran_indices, self.train_span_indices = self.get_data_loader(examples=self.train_examples, type='train_data')
         self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices = self.get_data_loader(examples=self.eval_examples, type='eval_data')
     
+    
+    def process_DG(self, DGEDT_train_data, gcls_length):
+        aspect_related_paths = []
+        for i in range(len(DGEDT_train_data)):
+            dg = DGEDT_train_data[i]['dependency_graph'][0] + DGEDT_train_data[i]['dependency_graph'][1]
+            dg[dg>=1] = 1
+            dg = torch.tensor(dg)
+            for k in range(len(DGEDT_train_data[i]['span_indices'])):
+                tran_start = DGEDT_train_data[i]['span_indices'][k][0]
+                tran_end = DGEDT_train_data[i]['span_indices'][k][1] 
+
+                input_ids_start = DGEDT_train_data[i]['tran_indices'][tran_start][0]+1
+                input_ids_end = DGEDT_train_data[i]['tran_indices'][tran_end-1][1] +1
+
+                paths = [[item] for item in range(tran_start, tran_end)]
+                list_ = []
+                for j in range(len(DGEDT_train_data[i]['tran_indices'])):
+                    if j == 0 :
+                        new_paths = []
+                        for item in paths:
+                            if len(item) <= j:
+                                continue
+                            current_node = item[-1]
+                            if len(item) > 1:
+                                last_node = item[-2]
+                            else:
+                                last_node = 100000
+                            x = (dg[current_node] == 1).nonzero(as_tuple=True)[0]
+                            for k in range(x.size(0)):
+                                if x[k] != last_node and x[k]!= current_node:
+                                    item_ = item.copy()
+                                    item_.append(int(x[k]))
+                                    new_paths.append(item_)
+                    else:
+                        new_paths = []
+                        for item in last_new_paths:
+                            if len(item) <= j:
+                                continue
+                            current_node = item[-1]
+                            if len(item) > 1:
+                                last_node = item[-2]
+                            else:
+                                last_node = 100000
+                            x = (dg[current_node] == 1).nonzero(as_tuple=True)[0]
+                            for k in range(x.size(0)):
+                                if x[k] != last_node and x[k]!= current_node:
+                                    item_ = item.copy()
+                                    item_.append(int(x[k]))
+                                    new_paths.append(item_)
+
+                    if len(new_paths) == 0:
+                        break
+
+                    last_new_paths = new_paths
+                    paths += last_new_paths
+
+                multiple_path = []
+                aspect_related_paths.append(paths)
+                for item in paths:
+                    if [item[0], item[-1]] in multiple_path:
+                        print('multiple path exists, i: ', i)
+                    else:
+                        multiple_path += [item[0], item[-1]]
+        
+        length_L_words = []
+        for i in range(len(aspect_related_paths)):
+            Dict = {}
+            for item in aspect_related_paths[i]:
+                start_idx, end_idx = DGEDT_train_data[i]['tran_indices'][item[-1]]
+                if len(item)-1 in Dict.keys():
+                    Dict[len(item)-1].append([item[-1], start_idx+1, end_idx+1])
+                else:
+                    Dict[len(item)-1] = [[item[-1], start_idx+1, end_idx+1]]
+            length_L_words.append(Dict)
+        
+        length = gcls_length
+        
+        gcls_attention_mask = []
+        for i in range(len(length_L_words)):
+            att_mask = torch.zeros([128])
+            att_mask[0] = 1
+            for j in range(length+1):
+                if j not in length_L_words[i].keys():
+                    break
+                for item in length_L_words[i][j]:
+                    att_mask[item[1]:item[2]] = 1
+            gcls_attention_mask.append(att_mask)
+
+
+        for i in range(len(length_L_words)):
+            if len(length_L_words[i][0]) == 1:
+                assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
+                tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[i][0][0][1]:
+                                                                                    length_L_words[i][0][0][2]])
+                
+        return gcls_attention_mask
+                        
+        
     def get_data_loader(self, examples, type='train_data'):
         features = self.convert_examples_to_features(
             examples, self.label_list, self.opt.max_seq_length, self.tokenizer)
@@ -74,13 +180,6 @@ class ReadData:
         assert all_input_ids_org.size(0) == batch_size_
         ##############################
         all_input_ids = DGEDT_batches['text_indices']
-        for i in range(batch_size_):
-            if torch.sum(all_input_ids[i] != 0) > 10:
-                count = 0
-                for item in all_input_ids[i]:
-                    if item != 0 and item in all_input_ids_org[i]:
-                        count += 1
-                assert count / torch.sum(all_input_ids[i] != 0) >= 0.6
         ##############################
         
         
@@ -103,7 +202,16 @@ class ReadData:
         for i in range(batch_size_):
             x = (all_input_ids[i] == 102).nonzero(as_tuple=True)[0]
             all_segment_ids[i][x[0]+1:x[1]+1] = 1
+            
+#             all_segment_ids[i][x[0]+1:x[-1]+1] = 1
+            
         ##########
+        
+        ########## target aspect에만 한 번 segment_ids 1 줘 봄. 
+#         for i in range(batch_size_):
+#             aspect_start_idx = DGEDT_batches['tran_indices'][i][DGEDT_batches['span_indices'][i][0][0]][0] + 1
+#             aspect_end_idx = DGEDT_batches['tran_indices'][i][DGEDT_batches['span_indices'][i][0][1]-1][1] + 1 
+#             all_segment_ids[i][aspect_start_idx:aspect_end_idx] = 1
         
         
         
