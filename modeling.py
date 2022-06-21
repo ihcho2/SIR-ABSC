@@ -323,15 +323,19 @@ class BERTPooler_gcls(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, bigcls = False):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
         # first_token_tensor = hidden_states[:, 0]
-        first_second_token_tensor = hidden_states[:, :2]
-#         cat = first_second_token_tensor.sum(dim=1)
-        cat = torch.mean(first_second_token_tensor, dim = 1)
-#         cat = torch.max(first_second_token_tensor, dim = 1)[0]
-        
+        if bigcls == False:
+            first_second_token_tensor = hidden_states[:, :2]
+#             cat = first_second_token_tensor.sum(dim=1)
+            cat = torch.mean(first_second_token_tensor, dim = 1)
+#             cat = torch.max(first_second_token_tensor, dim = 1)[0]
+        else:
+            first_to_fourth_token_tensor = hidden_states[:, :3]
+            cat = torch.mean(first_to_fourth_token_tensor, dim = 1)
+#             cat = torch.max(first_to_fourth_token_tensor, dim = 1)[0]
         
         pooled_output = self.dense(cat)
         pooled_output = self.activation(pooled_output)
@@ -420,7 +424,8 @@ class BertModel_GCLS(nn.Module):
         self.encoder = BERTEncoder_gcls(config)
         self.pooler = BERTPooler_gcls(config)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, gcls_attention_mask = None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, gcls_attention_mask = None, 
+                gcls_attention_mask_in = None, gcls_attention_mask_out = None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -447,8 +452,16 @@ class BertModel_GCLS(nn.Module):
  
         extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
         
+        
         for i in range(input_ids.size(0)):
-            extended_attention_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i]) * -10000.0
+            if gcls_attention_mask_in == None:    # Single GCLS
+                extended_attention_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i]) * -10000.0
+            else:    # Bi-GCLS
+                assert input_ids[0][1]== 101 and input_ids[0][2] == 101
+                extended_attention_mask[i, 0, 1, :] =  (1 - gcls_attention_mask_in[i]) * -10000.0
+                extended_attention_mask[i, 0, 2, :] =  (1 - gcls_attention_mask_out[i]) * -10000.0
+#                 extended_attention_mask[i, 0, 3, :] =  (1 - gcls_attention_mask_out[i]) * -10000.0
+                
                 
 #         for i in range(len(gcn_batch.node_features_1_batch)):
 #             extended_attention_mask[gcn_batch.node_features_1_batch[i],0,1,
@@ -466,7 +479,10 @@ class BertModel_GCLS(nn.Module):
         embedding_output = self.embeddings(input_ids, token_type_ids)
         all_encoder_layers = self.encoder(embedding_output, extended_attention_mask)
         sequence_output = all_encoder_layers[-1]
-        pooled_output = self.pooler(sequence_output)
+        if gcls_attention_mask_in == None:
+            pooled_output = self.pooler(sequence_output)
+        else:
+            pooled_output = self.pooler(sequence_output, bigcls = True)
         return all_encoder_layers, pooled_output
 
 class BertForSequenceClassification(nn.Module):
@@ -559,8 +575,10 @@ class BertForSequenceClassification_GCLS(nn.Module):
                 module.bias.data.zero_()
         self.apply(init_weights)
 
-    def forward(self, input_ids, token_type_ids, attention_mask, gcls_attention_mask, labels=None):
-        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, gcls_attention_mask)
+    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, gcls_attention_mask=None, 
+                gcls_attention_mask_in=None, gcls_attention_mask_out = None):
+        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, gcls_attention_mask, gcls_attention_mask_in, 
+                                    gcls_attention_mask_out)
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
 
