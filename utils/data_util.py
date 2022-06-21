@@ -67,99 +67,103 @@ class ReadData:
     
     
     def process_DG(self, DGEDT_train_data, gcls_length):
-        aspect_related_paths = []
+        aspect_related_paths = [[], [], []]
         for i in range(len(DGEDT_train_data)):
-            dg = DGEDT_train_data[i]['dependency_graph'][0] + DGEDT_train_data[i]['dependency_graph'][1]
-            dg[dg>=1] = 1
-            dg = torch.tensor(dg)
-            for k in range(len(DGEDT_train_data[i]['span_indices'])):
-                tran_start = DGEDT_train_data[i]['span_indices'][k][0]
-                tran_end = DGEDT_train_data[i]['span_indices'][k][1] 
+            dgs = []
+            dgs.append(torch.tensor(DGEDT_train_data[i]['dependency_graph'][0]))
+            dgs.append(torch.tensor(DGEDT_train_data[i]['dependency_graph'][1]))
+            dg_ = dgs[0] + dgs[1]
+            dg_[dg_>=1] = 1
+            dg_ = torch.tensor(dg_)
+            dgs.append(dg_)
 
-                input_ids_start = DGEDT_train_data[i]['tran_indices'][tran_start][0]+1
-                input_ids_end = DGEDT_train_data[i]['tran_indices'][tran_end-1][1] +1
+            for z in range(len(dgs)):
+                dg = dgs[z]
+                for k in range(len(DGEDT_train_data[i]['span_indices'])):
+                    tran_start = DGEDT_train_data[i]['span_indices'][k][0]
+                    tran_end = DGEDT_train_data[i]['span_indices'][k][1]
 
-                paths = [[item] for item in range(tran_start, tran_end)]
-                list_ = []
-                for j in range(len(DGEDT_train_data[i]['tran_indices'])):
-                    if j == 0 :
-                        new_paths = []
-                        for item in paths:
-                            if len(item) <= j:
-                                continue
-                            current_node = item[-1]
-                            if len(item) > 1:
-                                last_node = item[-2]
-                            else:
-                                last_node = 100000
-                            x = (dg[current_node] == 1).nonzero(as_tuple=True)[0]
-                            for k in range(x.size(0)):
-                                if x[k] != last_node and x[k]!= current_node:
-                                    item_ = item.copy()
-                                    item_.append(int(x[k]))
-                                    new_paths.append(item_)
-                    else:
-                        new_paths = []
-                        for item in last_new_paths:
-                            if len(item) <= j:
-                                continue
-                            current_node = item[-1]
-                            if len(item) > 1:
-                                last_node = item[-2]
-                            else:
-                                last_node = 100000
-                            x = (dg[current_node] == 1).nonzero(as_tuple=True)[0]
-                            for k in range(x.size(0)):
-                                if x[k] != last_node and x[k]!= current_node:
-                                    item_ = item.copy()
-                                    item_.append(int(x[k]))
-                                    new_paths.append(item_)
+                    input_ids_start = DGEDT_train_data[i]['tran_indices'][tran_start][0]+1
+                    input_ids_end = DGEDT_train_data[i]['tran_indices'][tran_end-1][1] +1
 
-                    if len(new_paths) == 0:
-                        break
+                    paths = [[item] for item in range(tran_start, tran_end)]
+                    list_ = []
+                    for j in range(len(DGEDT_train_data[i]['tran_indices'])):    # 여기서 j는 path의 length를 의미. len(tran_indices[i])는 그냥 넉넉하게 잡은 것.
+                        if j == 0 :
+                            new_paths = []
+                            for item in paths:
+                                current_node = item[-1]
+                                if len(item) > 1:
+                                    last_node = item[-2]
+                                else:
+                                    last_node = 100000
+                                x = (dg[current_node] == 1).nonzero(as_tuple=True)[0]
+                                for k in range(x.size(0)):
+                                    if x[k] != last_node and x[k]!= current_node:
+                                        item_ = item.copy()
+                                        item_.append(int(x[k]))
+                                        new_paths.append(item_)
+                        else:
+                            new_paths = []
+                            for item in last_new_paths:
+                                current_node = item[-1]
+                                if len(item) > 1:
+                                    last_node = item[-2]
+                                else:
+                                    last_node = 100000
+                                x = (dgs[2][current_node] == 1).nonzero(as_tuple=True)[0]
+                                for k in range(x.size(0)):
+                                    if x[k] != last_node and x[k]!= current_node:
+                                        item_ = item.copy()
+                                        item_.append(int(x[k]))
+                                        new_paths.append(item_)
 
-                    last_new_paths = new_paths
-                    paths += last_new_paths
+                        if len(new_paths) == 0:
+                            break
 
-                multiple_path = []
-                aspect_related_paths.append(paths)
-                for item in paths:
-                    if [item[0], item[-1]] in multiple_path:
-                        print('multiple path exists, i: ', i)
-                    else:
-                        multiple_path += [item[0], item[-1]]
+                        last_new_paths = new_paths
+                        paths += last_new_paths
+
+                    multiple_path = []
+                    aspect_related_paths[z].append(paths)
+                    for item in paths:
+                        if [item[0], item[-1]] in multiple_path:
+                            print('multiple path exists, i: ', i)
+                        else:
+                            multiple_path += [item[0], item[-1]]
         
-        length_L_words = []
-        for i in range(len(aspect_related_paths)):
-            Dict = {}
-            for item in aspect_related_paths[i]:
-                start_idx, end_idx = DGEDT_train_data[i]['tran_indices'][item[-1]]
-                if len(item)-1 in Dict.keys():
-                    Dict[len(item)-1].append([item[-1], start_idx+1, end_idx+1])
-                else:
-                    Dict[len(item)-1] = [[item[-1], start_idx+1, end_idx+1]]
-            length_L_words.append(Dict)
+        length_L_words = [[], [], []]
+        for j in range(len(aspect_related_paths)):
+            for i in range(len(aspect_related_paths[j])):
+                Dict = {}
+                for item in aspect_related_paths[j][i]:
+                    start_idx, end_idx = DGEDT_train_data[i]['tran_indices'][item[-1]]
+                    if len(item)-1 in Dict.keys():
+                        Dict[len(item)-1].append([item[-1], start_idx+1, end_idx+1])
+                    else:
+                        Dict[len(item)-1] = [[item[-1], start_idx+1, end_idx+1]]
+                length_L_words[j].append(Dict)
+
+            for i in range(len(DGEDT_train_data)):
+                if len(length_L_words[j][i][0]) == 1:
+                    assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
+                    tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]:
+                                                                                        length_L_words[j][i][0][0][2]])
         
         length = gcls_length
         
-        gcls_attention_mask = []
-        for i in range(len(length_L_words)):
-            att_mask = torch.zeros([128])
-            att_mask[0] = 1
-            for j in range(length+1):
-                if j not in length_L_words[i].keys():
-                    break
-                for item in length_L_words[i][j]:
-                    att_mask[item[1]:item[2]] = 1
-            gcls_attention_mask.append(att_mask)
+        gcls_attention_mask = [[], [], []]
+        for z in range(len(length_L_words)):
+            for i in range(len(length_L_words[z])):
+                att_mask = torch.zeros([128])
+                att_mask[0] = 1
+                for j in range(length+1):
+                    if j not in length_L_words[z][i].keys():
+                        break
+                    for item in length_L_words[z][i][j]:
+                        att_mask[item[1]:item[2]] = 1
+                gcls_attention_mask[z].append(att_mask)
 
-
-        for i in range(len(length_L_words)):
-            if len(length_L_words[i][0]) == 1:
-                assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
-                tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[i][0][0][1]:
-                                                                                    length_L_words[i][0][0][2]])
-                
         return gcls_attention_mask
                         
         
