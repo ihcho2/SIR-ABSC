@@ -54,16 +54,14 @@ class ReadData:
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
         
-        if opt.model_name in ['gcls']:
+        if opt.model_name in ['gcls', 'scls', 'gcls_er']:
             self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, opt.gcls_length)
             self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data, opt.gcls_length)
         
-        
-        
         ######################
         
-        self.train_data, self.train_dataloader, self.train_tran_indices, self.train_span_indices = self.get_data_loader(examples=self.train_examples, type='train_data')
-        self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices = self.get_data_loader(examples=self.eval_examples, type='eval_data')
+        self.train_data, self.train_dataloader, self.train_tran_indices, self.train_span_indices, self.train_scls_input_mask = self.get_data_loader(examples=self.train_examples, type='train_data')
+        self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices, self.eval_scls_input_mask = self.get_data_loader(examples=self.eval_examples, type='eval_data')
     
     
     def process_DG(self, DGEDT_train_data, gcls_length):
@@ -133,36 +131,40 @@ class ReadData:
                             multiple_path += [item[0], item[-1]]
         
         length_L_words = [[], [], []]
+        
+        A = 2
         for j in range(len(aspect_related_paths)):
             for i in range(len(aspect_related_paths[j])):
                 Dict = {}
                 for item in aspect_related_paths[j][i]:
                     start_idx, end_idx = DGEDT_train_data[i]['tran_indices'][item[-1]]
                     if len(item)-1 in Dict.keys():
-                        Dict[len(item)-1].append([item[-1], start_idx+1, end_idx+1])
+                        Dict[len(item)-1].append([item[-1], start_idx+A, end_idx+A])
                     else:
-                        Dict[len(item)-1] = [[item[-1], start_idx+1, end_idx+1]]
+                        Dict[len(item)-1] = [[item[-1], start_idx+A, end_idx+A]]
                 length_L_words[j].append(Dict)
 
             for i in range(len(DGEDT_train_data)):
                 if len(length_L_words[j][i][0]) == 1:
                     assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
-                    tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]:
-                                                                                        length_L_words[j][i][0][0][2]])
+                    tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
+                                                                                        length_L_words[j][i][0][0][2]-A+1])
         
         length = gcls_length
-        
-        gcls_attention_mask = [[], [], []]
+            
+        gcls_attention_mask = [[],[],[]]    # 2가 GCN용
         for z in range(len(length_L_words)):
             for i in range(len(length_L_words[z])):
-                att_mask = torch.zeros([128])
-                att_mask[0] = 1
-                for j in range(length+1):
-                    if j not in length_L_words[z][i].keys():
-                        break
-                    for item in length_L_words[z][i][j]:
-                        att_mask[item[1]:item[2]] = 1
-                gcls_attention_mask[z].append(att_mask)
+                gcls_attention_mask[z].append([[], [], [], []])   # for length 0,1,2,3 each.
+                for l in [0,1,2,3]:
+                    att_mask = torch.zeros([128])
+                    att_mask[:2] = 1
+                    for j in range(l+1):
+                        if j not in length_L_words[z][i].keys():
+                            break
+                        for item in length_L_words[z][i][j]:
+                            att_mask[item[1]:item[2]] = 1
+                    gcls_attention_mask[z][i][l] = att_mask
 
         return gcls_attention_mask
                         
@@ -192,8 +194,24 @@ class ReadData:
         ##############################
         text_len = torch.sum(DGEDT_batches['text_indices'] != 0, dim=-1)
         all_input_mask = length2mask(text_len, DGEDT_batches['text_indices'].size(1))
-#         for i in range(batch_size_):
-#             assert torch.sum(all_input_mask[i]!=0) == len(DGEDT_data[i]['text_indices'])
+        
+        # For SCLS
+        scls_input_mask = []
+        for i in range(batch_size_):
+            init_mask = torch.zeros([128, 128])
+#             x = (all_input_ids[i] == 102).nonzero(as_tuple=True)[0]
+            
+#             # 정사각형 attention matrix를 그려보면 코드 이해가 좀 더 쉽다.
+#             init_mask[:x[1]+1, :x[1]+1] = torch.ones([x[1]+1, x[1]+1])
+            
+#             init_mask[x[1]+1:x[2]+1, :x[0]+1] = 1
+#             init_mask[x[1]+1:x[2]+1, x[1]+1:x[2]+1] = 1
+            
+#             init_mask[1] = init_mask[x[1]+1]
+            
+            scls_input_mask.append(init_mask)
+            
+        
         ##############################
         
         
@@ -205,9 +223,10 @@ class ReadData:
         ########## When target is appended at the end or the beginning.
         for i in range(batch_size_):
             x = (all_input_ids[i] == 102).nonzero(as_tuple=True)[0]
-            all_segment_ids[i][x[0]+1:x[1]+1] = 1
+#             all_segment_ids[i][x[0]+1:x[1]+1] = 1
             
-#             all_segment_ids[i][x[0]+1:x[-1]+1] = 1
+            # For SCLS
+            all_segment_ids[i][x[0]+1:x[-1]+1] = 1
             
         ##########
         
@@ -341,11 +360,11 @@ class ReadData:
         if type == 'train_data':
             train_data = data
             train_sampler = RandomSampler(data)
-            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices
+            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices, scls_input_mask
         else:
             eval_data = data
             eval_sampler = SequentialSampler(eval_data)
-            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices
+            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices, scls_input_mask
 
     def convert_examples_to_features(self, examples, label_list, max_seq_length, tokenizer):
         """Loads a data file into a list of `InputBatch`s."""
