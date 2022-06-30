@@ -26,6 +26,10 @@ import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 
+from transformers import BertTokenizer
+
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
 def gelu(x):
     """Implementation of the gelu activation function.
         For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
@@ -296,11 +300,29 @@ class BERTEncoder_gcls(nn.Module):
         layer = BERTLayer(config)
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
 
+    def forward(self, hidden_states, attention_mask, layer_L):
+        all_encoder_layers = []
+        for i, layer_module in enumerate(self.layer):
+            hidden_states = layer_module(hidden_states, attention_mask[layer_L[i]])
+            all_encoder_layers.append(hidden_states)
+        return all_encoder_layers
+    
+class BERTEncoder_ER(nn.Module):
+    def __init__(self, config):
+        super(BERTEncoder_ER, self).__init__()
+        layer = BERTLayer(config)
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
+
     def forward(self, hidden_states, attention_mask):
         all_encoder_layers = []
         for layer_module in self.layer:
             hidden_states = layer_module(hidden_states, attention_mask)
             all_encoder_layers.append(hidden_states)
+            
+        for layer_module in self.layer:
+            hidden_states = layer_module(hidden_states, attention_mask)
+            all_encoder_layers.append(hidden_states)
+            
         return all_encoder_layers
 
 class BERTPooler(nn.Module):
@@ -323,19 +345,33 @@ class BERTPooler_gcls(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
-    def forward(self, hidden_states, bigcls = False):
+    def forward(self, hidden_states):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
         # first_token_tensor = hidden_states[:, 0]
-        if bigcls == False:
-            first_second_token_tensor = hidden_states[:, :2]
-#             cat = first_second_token_tensor.sum(dim=1)
-            cat = torch.mean(first_second_token_tensor, dim = 1)
-#             cat = torch.max(first_second_token_tensor, dim = 1)[0]
-        else:
-            first_to_fourth_token_tensor = hidden_states[:, :3]
-            cat = torch.mean(first_to_fourth_token_tensor, dim = 1)
-#             cat = torch.max(first_to_fourth_token_tensor, dim = 1)[0]
+        first_second_token_tensor = hidden_states[:, :2]
+#         cat = first_second_token_tensor.sum(dim=1)
+        cat = torch.mean(first_second_token_tensor, dim = 1)
+#         cat = torch.max(first_second_token_tensor, dim = 1)[0]
+        
+        pooled_output = self.dense(cat)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
+    
+class BERTPooler_scls(nn.Module):
+    def __init__(self, config):
+        super(BERTPooler_scls, self).__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.activation = nn.Tanh()
+
+    def forward(self, hidden_states):
+        # We "pool" the model by simply taking the hidden state corresponding
+        # to the first token.
+        # first_token_tensor = hidden_states[:, 0]
+        first_second_token_tensor = hidden_states[:, :2]
+#         cat = first_second_token_tensor.sum(dim=1)
+        cat = torch.mean(first_second_token_tensor, dim = 1)
+#         cat = torch.max(first_second_token_tensor, dim = 1)[0]
         
         pooled_output = self.dense(cat)
         pooled_output = self.activation(pooled_output)
@@ -424,8 +460,99 @@ class BertModel_GCLS(nn.Module):
         self.encoder = BERTEncoder_gcls(config)
         self.pooler = BERTPooler_gcls(config)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, gcls_attention_mask = None, 
-                gcls_attention_mask_in = None, gcls_attention_mask_out = None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, gcls_attention_mask = None, layer_L = None):
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids)
+        if token_type_ids is None:
+            token_type_ids = torch.zeros_like(input_ids)
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        # this attention mask is more simple than the triangular masking of causal attention
+        # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        
+        
+        ####### gcls 도입
+        original_attention_mask = extended_attention_mask.clone()    # torch.Size([32, 1, 1, 128])
+ 
+        extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
+        
+        extended_attention_mask_ = []
+        
+        for j in range(4):
+            extended_att_mask = extended_attention_mask.clone()
+            for i in range(input_ids.size(0)):
+                extended_att_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i][j]) * -10000.0
+            extended_attention_mask_.append(extended_att_mask)
+            
+        ####### A=1 vs A=2 점검
+        # Batch_idx = 0 에서 gcls length = 0 이 정확히 aspect를 짚는지 그리고 length = 1 까지는 dataloader_modifying에서 수동 확인 가능하기 때문에 진행.
+#         x = (extended_attention_mask_[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
+#         print('-'*77)
+#         print('gcls length = 0 attends to the following tokens: ')
+#         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+        
+#         x = (extended_attention_mask_[1][0][0][1] == 0).nonzero(as_tuple=True)[0]
+#         print('-'*77)
+#         print('gcls length = 1 attends to the following tokens: ')
+#         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+        
+#         x = (extended_attention_mask_[2][0][0][1] == 0).nonzero(as_tuple=True)[0]
+#         print('-'*77)
+#         print('gcls length = 2 attends to the following tokens: ')
+#         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                  
+#         x = (extended_attention_mask_[3][0][0][1] == 0).nonzero(as_tuple=True)[0]
+#         print('-'*77)
+#         print('gcls length = 3 attends to the following tokens: ')
+#         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+        
+        embedding_output = self.embeddings(input_ids, token_type_ids)
+        all_encoder_layers = self.encoder(embedding_output, extended_attention_mask_, layer_L)
+        sequence_output = all_encoder_layers[-1]
+        pooled_output = self.pooler(sequence_output)
+        
+        return all_encoder_layers, pooled_output
+
+class BertModel_GCLS_ER(nn.Module):
+    """BERT model ("Bidirectional Embedding Representations from a Transformer").
+
+    Example usage:
+    ```python
+    # Already been converted into WordPiece token ids
+    input_ids = torch.LongTensor([[31, 51, 99], [15, 5, 0]])
+    input_mask = torch.LongTensor([[1, 1, 1], [1, 1, 0]])
+    token_type_ids = torch.LongTensor([[0, 0, 1], [0, 2, 0]])
+
+    config = modeling.BertConfig(vocab_size=32000, hidden_size=512,
+        num_hidden_layers=8, num_attention_heads=6, intermediate_size=1024)
+
+    model = modeling.BertModel(config=config)
+    all_encoder_layers, pooled_output = model(input_ids, token_type_ids, input_mask)
+    ```
+    """
+    def __init__(self, config: BertConfig):
+        """Constructor for BertModel.
+
+        Args:
+            config: `BertConfig` instance.
+        """
+        super(BertModel_GCLS_ER, self).__init__()
+        self.embeddings = BERTEmbeddings(config)
+        self.encoder = BERTEncoder_ER(config)
+        self.pooler = BERTPooler_gcls(config)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, gcls_attention_mask = None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -454,14 +581,90 @@ class BertModel_GCLS(nn.Module):
         
         
         for i in range(input_ids.size(0)):
-            if gcls_attention_mask_in == None:    # Single GCLS
-                extended_attention_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i]) * -10000.0
-            else:    # Bi-GCLS
-                assert input_ids[0][1]== 101 and input_ids[0][2] == 101
-                extended_attention_mask[i, 0, 1, :] =  (1 - gcls_attention_mask_in[i]) * -10000.0
-                extended_attention_mask[i, 0, 2, :] =  (1 - gcls_attention_mask_out[i]) * -10000.0
-#                 extended_attention_mask[i, 0, 3, :] =  (1 - gcls_attention_mask_out[i]) * -10000.0
-                
+            extended_attention_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i]) * -10000.0
+        
+        
+        embedding_output = self.embeddings(input_ids, token_type_ids)
+        all_encoder_layers = self.encoder(embedding_output, extended_attention_mask)
+        sequence_output = all_encoder_layers[-1]
+        pooled_output = self.pooler(sequence_output)
+        
+        return all_encoder_layers, pooled_output
+
+class BertModel_SCLS(nn.Module):
+    """BERT model ("Bidirectional Embedding Representations from a Transformer").
+
+    Example usage:
+    ```python
+    # Already been converted into WordPiece token ids
+    input_ids = torch.LongTensor([[31, 51, 99], [15, 5, 0]])
+    input_mask = torch.LongTensor([[1, 1, 1], [1, 1, 0]])
+    token_type_ids = torch.LongTensor([[0, 0, 1], [0, 2, 0]])
+
+    config = modeling.BertConfig(vocab_size=32000, hidden_size=512,
+        num_hidden_layers=8, num_attention_heads=6, intermediate_size=1024)
+
+    model = modeling.BertModel(config=config)
+    all_encoder_layers, pooled_output = model(input_ids, token_type_ids, input_mask)
+    ```
+    """
+    def __init__(self, config: BertConfig):
+        """Constructor for BertModel.
+
+        Args:
+            config: `BertConfig` instance.
+        """
+        super(BertModel_SCLS, self).__init__()
+        self.embeddings = BERTEmbeddings(config)
+        self.encoder = BERTEncoder(config)
+        self.pooler = BERTPooler_scls(config)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, scls_attention_mask = None):
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids)
+        if token_type_ids is None:
+            token_type_ids = torch.zeros_like(input_ids)
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        # this attention mask is more simple than the triangular masking of causal attention
+        # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        
+        
+        ####### scls 도입
+        original_attention_mask = extended_attention_mask.clone()    # torch.Size([32, 1, 1, 128])
+ 
+        extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
+        
+#         print('scls_attention_mask[0][0][:50]: ', scls_attention_mask[0][0][:50])
+#         print('scls_attention_mask[0][1][:50]: ', scls_attention_mask[0][1][:50])
+#         print('scls_attention_mask[0][4][:50]: ', scls_attention_mask[0][4][:50])
+#         print('scls_attention_mask[0][8][:50]: ', scls_attention_mask[0][8][:50])
+#         print('scls_attention_mask[0][12][:50]: ', scls_attention_mask[0][12][:50])
+#         print('scls_attention_mask[0][16][:50]: ', scls_attention_mask[0][16][:50])
+#         print('scls_attention_mask[0][20][:50]: ', scls_attention_mask[0][20][:50])
+#         print('scls_attention_mask[0][24][:50]: ', scls_attention_mask[0][24][:50])
+#         print('scls_attention_mask[0][28][:50]: ', scls_attention_mask[0][28][:50])
+#         print('scls_attention_mask[0][32][:50]: ', scls_attention_mask[0][32][:50])
+#         print('scls_attention_mask[0][36][:50]: ', scls_attention_mask[0][36][:50])
+#         print('scls_attention_mask[0][40][:50]: ', scls_attention_mask[0][40][:50])
+#         print('scls_attention_mask[0][44][:50]: ', scls_attention_mask[0][44][:50])
+#         print('scls_attention_mask[0][48][:50]: ', scls_attention_mask[0][48][:50])
+#         print('scls_attention_mask[0][52][:50]: ', scls_attention_mask[0][52][:50])
+        
+        
+        for i in range(input_ids.size(0)):
+            extended_attention_mask[i, 0] = (1 - scls_attention_mask[i]) * -10000.0
                 
 #         for i in range(len(gcn_batch.node_features_1_batch)):
 #             extended_attention_mask[gcn_batch.node_features_1_batch[i],0,1,
@@ -479,10 +682,8 @@ class BertModel_GCLS(nn.Module):
         embedding_output = self.embeddings(input_ids, token_type_ids)
         all_encoder_layers = self.encoder(embedding_output, extended_attention_mask)
         sequence_output = all_encoder_layers[-1]
-        if gcls_attention_mask_in == None:
-            pooled_output = self.pooler(sequence_output)
-        else:
-            pooled_output = self.pooler(sequence_output, bigcls = True)
+        pooled_output = self.pooler(sequence_output)
+        
         return all_encoder_layers, pooled_output
 
 class BertForSequenceClassification(nn.Module):
@@ -575,10 +776,110 @@ class BertForSequenceClassification_GCLS(nn.Module):
                 module.bias.data.zero_()
         self.apply(init_weights)
 
-    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, gcls_attention_mask=None, 
-                gcls_attention_mask_in=None, gcls_attention_mask_out = None):
-        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, gcls_attention_mask, gcls_attention_mask_in, 
-                                    gcls_attention_mask_out)
+    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, gcls_attention_mask=None, layer_L = None):
+        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, gcls_attention_mask, layer_L)
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits, labels)
+            return loss, logits
+        else:
+            return logits
+
+class BertForSequenceClassification_GCLS_ER(nn.Module):
+    """BERT model for classification.
+    This module is composed of the BERT model with a linear layer on top of
+    the pooled output.
+
+    Example usage:
+    ```python
+    # Already been converted into WordPiece token ids
+    input_ids = torch.LongTensor([[31, 51, 99], [15, 5, 0]])
+    input_mask = torch.LongTensor([[1, 1, 1], [1, 1, 0]])
+    token_type_ids = torch.LongTensor([[0, 0, 1], [0, 2, 0]])
+
+    config = BertConfig(vocab_size=32000, hidden_size=512,
+        num_hidden_layers=8, num_attention_heads=6, intermediate_size=1024)
+
+    num_labels = 2
+
+    model = BertForSequenceClassification(config, num_labels)
+    logits = model(input_ids, token_type_ids, input_mask)
+    ```
+    """
+    def __init__(self, config, num_labels):
+        super(BertForSequenceClassification_GCLS_ER, self).__init__()
+        self.bert = BertModel_GCLS_ER(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
+
+        def init_weights(module):
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                # Slightly different from the TF version which uses truncated_normal for initialization
+                # cf https://github.com/pytorch/pytorch/pull/5617
+                module.weight.data.normal_(mean=0.0, std=config.initializer_range)
+            elif isinstance(module, BERTLayerNorm):
+                module.beta.data.normal_(mean=0.0, std=config.initializer_range)
+                module.gamma.data.normal_(mean=0.0, std=config.initializer_range)
+            if isinstance(module, nn.Linear):
+                module.bias.data.zero_()
+        self.apply(init_weights)
+
+    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, gcls_attention_mask=None):
+        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, gcls_attention_mask)
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits, labels)
+            return loss, logits
+        else:
+            return logits
+
+class BertForSequenceClassification_SCLS(nn.Module):
+    """BERT model for classification.
+    This module is composed of the BERT model with a linear layer on top of
+    the pooled output.
+
+    Example usage:
+    ```python
+    # Already been converted into WordPiece token ids
+    input_ids = torch.LongTensor([[31, 51, 99], [15, 5, 0]])
+    input_mask = torch.LongTensor([[1, 1, 1], [1, 1, 0]])
+    token_type_ids = torch.LongTensor([[0, 0, 1], [0, 2, 0]])
+
+    config = BertConfig(vocab_size=32000, hidden_size=512,
+        num_hidden_layers=8, num_attention_heads=6, intermediate_size=1024)
+
+    num_labels = 2
+
+    model = BertForSequenceClassification(config, num_labels)
+    logits = model(input_ids, token_type_ids, input_mask)
+    ```
+    """
+    def __init__(self, config, num_labels):
+        super(BertForSequenceClassification_SCLS, self).__init__()
+        self.bert = BertModel_SCLS(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
+
+        def init_weights(module):
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                # Slightly different from the TF version which uses truncated_normal for initialization
+                # cf https://github.com/pytorch/pytorch/pull/5617
+                module.weight.data.normal_(mean=0.0, std=config.initializer_range)
+            elif isinstance(module, BERTLayerNorm):
+                module.beta.data.normal_(mean=0.0, std=config.initializer_range)
+                module.gamma.data.normal_(mean=0.0, std=config.initializer_range)
+            if isinstance(module, nn.Linear):
+                module.bias.data.zero_()
+        self.apply(init_weights)
+
+    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, scls_attention_mask=None):
+        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, scls_attention_mask)
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
 
