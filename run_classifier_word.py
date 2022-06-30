@@ -18,17 +18,19 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from tensorboardX import SummaryWriter
-from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_GCLS
+from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_GCLS, BertForSequenceClassification_SCLS, BertForSequenceClassification_GCLS_ER
 from optimization import BERTAdam
 
 from configs import get_config
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
 from utils.data_util import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
+from utils.save_and_load import load_model_ER_1
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
 from data_utils import *
 from transformers import BertTokenizer
+from torch.distributions.bernoulli import Bernoulli
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
@@ -99,24 +101,54 @@ class Instructor:
         self.eval_tran_indices = self.dataset.eval_tran_indices
         self.eval_span_indices = self.dataset.eval_span_indices
         
-        if args.model_name in ['gcls']:
+        if len(self.opt.layer_L) != 12:
+            self.bernoulli = Bernoulli(torch.tensor([0.5]))
+        
+        if args.model_name in ['gcls', 'scls', 'gcls_er']:
             self.train_gcls_attention_mask = self.dataset.train_gcls_attention_mask
+            
             self.eval_gcls_attention_mask = self.dataset.eval_gcls_attention_mask
+            
+        if args.model_name in ['scls']:
+            self.train_scls_input_mask = self.dataset.train_scls_input_mask
+            self.eval_scls_input_mask = self.dataset.eval_scls_input_mask
 
         
         print("label size: {}".format(args.output_dim))
 
         # 初始化模型
         print("initialize model ...")
+        
+        os.makedirs(args.model_save_path, exist_ok=True)
+        
         if args.model_class == BertForSequenceClassification:
             self.model = BertForSequenceClassification(bert_config, len(self.dataset.label_list))
         elif args.model_class == BertForSequenceClassification_GCLS:
             self.model = BertForSequenceClassification_GCLS(bert_config, len(self.dataset.label_list))
+        elif args.model_class == BertForSequenceClassification_GCLS_ER:
+            self.model = BertForSequenceClassification_GCLS_ER(bert_config, len(self.dataset.label_list))
+        elif args.model_class == BertForSequenceClassification_SCLS:
+            self.model = BertForSequenceClassification_SCLS(bert_config, len(self.dataset.label_list))
         else:
             self.model = model_classes[args.model_name](bert_config, args)
 
-        if args.init_checkpoint is not None:
-            self.model.bert.load_state_dict(torch.load(args.init_checkpoint, map_location='cpu'))
+        if 'pytorch_model.bin' in self.opt.init_checkpoint:
+            self.model.bert.load_state_dict(torch.load(self.opt.init_checkpoint, map_location='cpu'))
+            print('-'*77)
+            print('Loading from ', self.opt.init_checkpoint)
+            print('-'*77)
+        
+        else:
+            if self.opt.model_name in ['gcls_er']:
+                self.model = load_model_ER_1(self.model, self.opt.init_checkpoint)
+                print('-'*77)
+                print('Loading from ', self.opt.init_checkpoint)
+                print('-'*77)
+            elif self.opt.model_name in ['gcls']:
+                self.model = load_model_ER_2(self.model, self.opt.init_checkpoint)
+                print('-'*77)
+                print('Loading from ', self.opt.init_checkpoint)
+                print('-'*77)
         if args.fp16:
             self.model.half()
             
@@ -151,8 +183,9 @@ class Instructor:
         else:
             self.param_optimizer = list(self.model.named_parameters())
             
+            
         no_decay = ['bias', 'gamma', 'beta']
-        if args.model_name in ['td_bert', 'fc', 'gcls']:
+        if args.model_name in ['td_bert', 'fc', 'gcls', 'scls', 'gcls_er']:
             optimizer_grouped_parameters = [
                 {'params': [p for n, p in self.param_optimizer if n not in no_decay],
                  'weight_decay_rate': 0.01},
@@ -202,7 +235,21 @@ class Instructor:
             
         self.global_step = 0  # 初始化全局步数为 0
         self.max_test_acc = 0
+        self.max_test_acc_min = 0
+        self.max_test_acc_med = 0
+        self.max_test_acc_max = 0
+        self.max_test_acc_inc = 0
+        self.max_test_acc_dec = 0
+        
         self.max_test_f1 = 0
+        self.max_test_f1_min = 0
+        self.max_test_f1_med = 0
+        self.max_test_f1_max = 0
+        self.max_test_f1_inc = 0
+        self.max_test_f1_dec = 0
+        
+        self.best_L_config_acc = []
+        self.best_L_config_f1 = []
                     
     def do_train(self):  # 训练模型
         # for _ in trange(int(args.num_train_epochs), desc="Epoch"):
@@ -230,13 +277,7 @@ class Instructor:
                 input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
                 input_left_ids, input_left_mask, segment_left_ids, \
                 all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids = batch
-                
-#                 print('-'*77)
-#                 print(tokenizer.convert_ids_to_tokens(input_ids[0]))
-#                 print('aspect: ', tokenizer.convert_ids_to_tokens(input_t_ids[0]))
-#                 print('segment_ids: ', segment_ids[0])
-#                 print('input_mask: ', input_mask[0])
-                
+                               
                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
                 input_mask = input_mask.to(self.opt.device)
@@ -245,16 +286,45 @@ class Instructor:
                 tran_indices = []
                 span_indices = []
                 gcls_attention_mask = []
+                
+                scls_attention_mask = []
                 for item in all_input_guids:
                     tran_indices.append(self.train_tran_indices[item])
                     span_indices.append(self.train_span_indices[item])
-                    if self.opt.model_name in ['gcls']:
-                        gcls_attention_mask.append(self.train_gcls_attention_mask[item])
-                    
+                    if self.opt.model_name in ['gcls', 'scls', 'gcls_er']:
+                        gcls_attention_mask.append(self.train_gcls_attention_mask[2][item])
+                    if self.opt.model_name in ['scls']:
+                        scls_attention_mask.append(self.train_scls_input_mask[item])
+                
+                if self.global_step % 50 == 0:
+                    print('-'*77)
+                    print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
+    #                 print('aspect: ', tokenizer.convert_ids_to_tokens(input_t_ids[0]))
+                    print('segment_ids: ', segment_ids[0][:50])
+                    print('input_mask: ', input_mask[0][:50])
+                    print('guid: ', all_input_guids[0])
+                    if self.opt.model_name in ['gcls', 'gcls_er']:
+                        print('gcls_attention_mask[0][:50]: ', gcls_attention_mask[0][:50])
+                    elif self.opt.model_name in ['scls']:
+                        print('scls_attention_mask[0][0][:50]: ' , scls_attention_mask[0][0][:50])
+                        print('scls_attention_mask[0][1][:50]: ' , scls_attention_mask[0][1][:50])
+        
+                if len(self.opt.layer_L) != 12:    # layer_L = random
+#                     layer_L = list(torch.tensor(self.bernoulli.sample([12]) + 1, dtype = int))
+#                     layer_L = random.choices(self.opt.layer_L, k=12)
+#                     layer_L = random.choices([0,1], k=4) + random.choices([1,2], k=4) + random.choices([2,3], k=4)
+                    x = random.sample([3,4,5,6,7,8,9], 2)
+                    x.sort()
+                    layer_L = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+                else:
+                    layer_L = self.opt.layer_L
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, gcls_attention_mask, label_ids)
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_ER]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                              layer_L)
+                elif self.opt.model_class in [BertForSequenceClassification_SCLS]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask, scls_attention_mask)
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -342,17 +412,38 @@ class Instructor:
                 if self.global_step % self.opt.log_step == 0:
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
-                    result = self.do_eval()  # 每跑完一轮，测试一次
+                    result = self.do_eval()
                     tr_loss = tr_loss / nb_tr_steps
-                    # self.scheduler.step(result['eval_accuracy'])  # 监测验证集的精度
+                    # self.scheduler.step(result['eval_accuracy'])
                     self.writer.add_scalar('train_loss', tr_loss, i_epoch)
                     self.writer.add_scalar('train_accuracy', train_accuracy_, i_epoch)
                     self.writer.add_scalar('eval_accuracy', result['eval_accuracy'], i_epoch)
                     self.writer.add_scalar('eval_loss', result['eval_loss'], i_epoch)
                     # self.writer.add_scalar('lr', self.optimizer_me.param_groups[0]['lr'], i_epoch)
-                    print(
+                    
+                    if len(self.opt.layer_L) == 12:
+                        print(
                         "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
                             train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc, self.max_test_f1))
+                    else:
+                        print(
+                            "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f}".format(
+                                train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1']))
+                        print()
+                        print(" | max_test_acc: {0:.6f} | max_test_f1: {1:.6f}".format(self.max_test_acc, self.max_test_f1))
+                        print(f" | best_L_config_acc: {self.best_L_config_acc} |")
+                        print(f" | best_L_config_f1: {self.best_L_config_f1} |")
+                        
+#                         print(" | max_test_acc_min: {0:.6f} | max_test_f1_min: {1:.6f}".format(self.max_test_acc_min,
+#                                                                                                self.max_test_f1_min))
+#                         print(" | max_test_acc_med: {0:.6f} | max_test_f1_med: {1:.6f}".format(self.max_test_acc_med,
+#                                                                                                self.max_test_f1_med))
+#                         print(" | max_test_acc_max: {0:.6f} | max_test_f1_max: {1:.6f}".format(self.max_test_acc_max,
+#                                                                                                self.max_test_f1_max))
+#                         print(" | max_test_acc_inc: {0:.6f} | max_test_f1_inc: {1:.6f}".format(self.max_test_acc_inc,
+#                                                                                                self.max_test_f1_dec))
+#                         print(" | max_test_acc_dec: {0:.6f} | max_test_f1_dec: {1:.6f}".format(self.max_test_acc_dec,
+#                                                                                            self.max_test_f1_dec))
 
 
     def do_eval(self):  # 测试准确率
@@ -362,6 +453,56 @@ class Instructor:
         # confidence = []
         y_pred = []
         y_true = []
+        
+        if len(self.opt.layer_L) == 12:
+            layer_L = self.opt.layer_L
+        else:    # layer_L = random
+#             layer_L = list(torch.tensor(self.bernoulli.sample([12]) + 1, dtype = int))
+#             layer_L = random.choices(self.opt.layer_L, k=12)
+#             layer_L = random.choices([0,1], k=4) + random.choices([1,2], k=4) + random.choices([2,3], k=4)
+
+            x = random.sample([3,4,5,6,7,8,9], 2)
+            x.sort()
+            layer_L = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            
+            x = random.sample([3,4,5,6,7,8,9], 2)
+            x.sort()
+            layer_L_min = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            
+            x = random.sample([3,4,5,6,7,8,9], 2)
+            x.sort()
+            layer_L_med = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            
+            x = random.sample([3,4,5,6,7,8,9], 2)
+            x.sort()
+            layer_L_max = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            
+            x = random.sample([3,4,5,6,7,8,9], 2)
+            x.sort()
+            layer_L_inc = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            
+            x = random.sample([3,4,5,6,7,8,9], 2)
+            x.sort()
+            layer_L_dec = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            
+            eval_loss_min, eval_accuracy_min = 0, 0
+            eval_loss_med, eval_accuracy_med = 0, 0
+            eval_loss_max, eval_accuracy_max = 0, 0
+            eval_loss_inc, eval_accuracy_inc = 0, 0
+            eval_loss_dec, eval_accuracy_dec = 0, 0
+            
+            nb_eval_steps_min, nb_eval_examples_min = 0, 0
+            nb_eval_steps_med, nb_eval_examples_med = 0, 0
+            nb_eval_steps_max, nb_eval_examples_max = 0, 0
+            nb_eval_steps_inc, nb_eval_examples_inc = 0, 0
+            nb_eval_steps_dec, nb_eval_examples_dec = 0, 0
+            
+            y_pred_min = []
+            y_pred_med = []
+            y_pred_max = []
+            y_pred_inc = []
+            y_pred_dec = []
+        
         for batch in tqdm(self.dataset.eval_dataloader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
             input_ids, input_mask, segment_ids, label_ids, \
@@ -380,16 +521,39 @@ class Instructor:
             tran_indices = []
             span_indices = []
             gcls_attention_mask = []
+            scls_attention_mask = []
             for item in all_input_guids:
                 tran_indices.append(self.eval_tran_indices[item])
                 span_indices.append(self.eval_span_indices[item])
-                if self.opt.model_name in ['gcls']:
-                    gcls_attention_mask.append(self.eval_gcls_attention_mask[item])                
-            with torch.no_grad():  # 不计算梯度
+                if self.opt.model_name in ['gcls', 'scls', 'gcls_er']:
+                    gcls_attention_mask.append(self.eval_gcls_attention_mask[2][item])
+                if self.opt.model_name in ['scls']:
+                    scls_attention_mask.append(self.eval_scls_input_mask[item])
+                    
+            with torch.no_grad():
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, gcls_attention_mask, label_ids)
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_ER]:
+                    if len(self.opt.layer_L) == 12:
+                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                              layer_L)
+                    else:
+                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                              layer_L)
+                        loss_min, logits_min = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_min)
+                        loss_med, logits_med = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_med)
+                        loss_max, logits_max = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_max)
+                        loss_inc, logits_inc = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_inc)
+                        loss_dec, logits_dec = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_dec)
+                    
+                elif self.opt.model_class in [BertForSequenceClassification_SCLS]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask, 
+                                              scls_attention_mask)
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -452,33 +616,211 @@ class Instructor:
                 loss = loss / args.gradient_accumulation_steps
 
             logits = logits.detach().cpu().numpy()
+            if len(self.opt.layer_L) != 12:
+                logits_min = logits_min.detach().cpu().numpy()
+                logits_med = logits_med.detach().cpu().numpy()
+                logits_max = logits_max.detach().cpu().numpy()
+                logits_inc = logits_inc.detach().cpu().numpy()
+                logits_dec = logits_dec.detach().cpu().numpy()
+            
             label_ids = label_ids.to('cpu').numpy()
             tmp_eval_accuracy = accuracy(logits, label_ids)
+            if len(self.opt.layer_L) != 12:
+                tmp_eval_accuracy_min = accuracy(logits_min, label_ids)
+                tmp_eval_accuracy_med = accuracy(logits_med, label_ids)
+                tmp_eval_accuracy_max = accuracy(logits_max, label_ids)
+                tmp_eval_accuracy_inc = accuracy(logits_inc, label_ids)
+                tmp_eval_accuracy_dec = accuracy(logits_dec, label_ids)
+            
             y_pred.extend(np.argmax(logits, axis=1))
+            if len(self.opt.layer_L) != 12:
+                y_pred_min.extend(np.argmax(logits_min, axis=1))
+                y_pred_med.extend(np.argmax(logits_med, axis=1))
+                y_pred_max.extend(np.argmax(logits_max, axis=1))
+                y_pred_inc.extend(np.argmax(logits_inc, axis=1))
+                y_pred_dec.extend(np.argmax(logits_dec, axis=1))
+            
             y_true.extend(label_ids)
 
             # eval_loss += tmp_eval_loss.mean().item()
             eval_loss += loss.item()
+            if len(self.opt.layer_L) != 12:
+                eval_loss_min += loss_min.item()
+                eval_loss_med += loss_med.item()
+                eval_loss_max += loss_max.item()
+                eval_loss_inc += loss_inc.item()
+                eval_loss_dec += loss_dec.item()
+            
+            
             eval_accuracy += tmp_eval_accuracy
+            if len(self.opt.layer_L) != 12:
+                eval_accuracy_min += tmp_eval_accuracy_min
+                eval_accuracy_med += tmp_eval_accuracy_med
+                eval_accuracy_max += tmp_eval_accuracy_max
+                eval_accuracy_inc += tmp_eval_accuracy_inc
+                eval_accuracy_dec += tmp_eval_accuracy_dec
+            
 
             nb_eval_examples += input_ids.size(0)
             nb_eval_steps += 1
 
         # eval_loss = eval_loss / len(self.dataset.eval_examples)
         test_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
+        if len(self.opt.layer_L) != 12:
+            test_f1_min = f1_score(y_true, y_pred_min, average='macro', labels=np.unique(y_true))
+            test_f1_med = f1_score(y_true, y_pred_med, average='macro', labels=np.unique(y_true))
+            test_f1_max = f1_score(y_true, y_pred_max, average='macro', labels=np.unique(y_true))
+            test_f1_inc = f1_score(y_true, y_pred_inc, average='macro', labels=np.unique(y_true))
+            test_f1_dec = f1_score(y_true, y_pred_dec, average='macro', labels=np.unique(y_true))
+        
         eval_loss = eval_loss / nb_eval_steps
+        if len(self.opt.layer_L) != 12:
+            eval_loss_min = eval_loss_min / nb_eval_steps
+            eval_loss_med = eval_loss_med / nb_eval_steps
+            eval_loss_max = eval_loss_max / nb_eval_steps
+            eval_loss_inc = eval_loss_inc / nb_eval_steps
+            eval_loss_dec = eval_loss_dec / nb_eval_steps
+        
         eval_accuracy = eval_accuracy / nb_eval_examples
+        if len(self.opt.layer_L) != 12:
+            eval_accuracy_min = eval_accuracy_min / nb_eval_examples
+            eval_accuracy_med = eval_accuracy_med / nb_eval_examples
+            eval_accuracy_max = eval_accuracy_max / nb_eval_examples
+            eval_accuracy_inc = eval_accuracy_inc / nb_eval_examples
+            eval_accuracy_dec = eval_accuracy_dec / nb_eval_examples
+        
         if eval_accuracy > self.max_test_acc:
             self.max_test_acc = eval_accuracy
-            if self.opt.do_predict:  # 测试模式才保存模型
-                torch.save(self.model, self.opt.model_save_path)
+            self.best_L_config_acc = layer_L
+            if self.max_test_acc > 0.78 and self.opt.do_save == True:
+                torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc.pkl')
+                print('='*77)
+                print('model saved at: ', self.opt.model_save_path + 'best_acc.pkl')
+                print('='*77)
         if test_f1 > self.max_test_f1:
             self.max_test_f1 = test_f1
+            self.best_L_config_f1 = layer_L
+            if self.max_test_f1 > 0.75 and self.opt.do_save == True:
+                torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1.pkl')
+                print('='*77)
+                print('model saved at: ', self.opt.model_save_path + 'best_f1.pkl')
+                print('='*77)
+                
+        if len(self.opt.layer_L) != 12:
+            if eval_accuracy_min > self.max_test_acc:
+                self.max_test_acc = eval_accuracy_min
+                self.best_L_config_acc = layer_L_min
+                if self.max_test_acc > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_min.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_min.pkl')
+                    print('='*77)
+            if test_f1_min > self.max_test_f1:
+                self.max_test_f1 = test_f1_min
+                self.best_L_config_f1 = layer_L_min
+                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_min.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_min.pkl')
+                    print('='*77)
 
+            if eval_accuracy_med > self.max_test_acc:
+                self.max_test_acc = eval_accuracy_med
+                self.best_L_config_acc = layer_L_med
+                if self.max_test_acc > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_med.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_med.pkl')
+                    print('='*77)
+            if test_f1_med > self.max_test_f1:
+                self.max_test_f1 = test_f1_med
+                self.best_L_config_f1 = layer_L_med
+                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_med.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_med.pkl')
+                    print('='*77)
 
+            if eval_accuracy_max > self.max_test_acc:
+                self.max_test_acc = eval_accuracy_max
+                self.best_L_config_acc = layer_L_max
+                if self.max_test_acc > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_max.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_max.pkl')
+                    print('='*77)
+            if test_f1_max > self.max_test_f1:
+                self.max_test_f1 = test_f1_max
+                self.best_L_config_f1 = layer_L_max
+                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_max.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_max.pkl')
+                    print('='*77)
+
+            if eval_accuracy_inc > self.max_test_acc:
+                self.max_test_acc = eval_accuracy_inc
+                self.best_L_config_acc = layer_L_inc
+                if self.max_test_acc > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_inc.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_inc.pkl')
+                    print('='*77)
+            if test_f1_inc > self.max_test_f1:
+                self.max_test_f1 = test_f1_inc
+                self.best_L_config_f1 = layer_L_inc
+                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_inc.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_inc.pkl')
+                    print('='*77)
+
+            if eval_accuracy_dec > self.max_test_acc:
+                self.max_test_acc = eval_accuracy_dec
+                self.best_L_config_acc = layer_L_dec
+                if self.max_test_acc > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_dec.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_dec.pkl')
+                    print('='*77)
+            if test_f1_dec > self.max_test_f1:
+                self.max_test_f1 = test_f1_dec
+                self.best_L_config_f1 = layer_L_dec
+                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_dec.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_dec.pkl')
+                    print('='*77)
+        
         result = {'eval_loss': eval_loss,
                   'eval_accuracy': eval_accuracy,
                   'eval_f1': test_f1, }
+        
+        if len(self.opt.layer_L) != 12:
+            result = {'eval_loss': eval_loss,
+                      'eval_accuracy': eval_accuracy,
+                      'eval_f1': test_f1,
+
+                      'eval_loss_min': eval_loss_min,
+                      'eval_accuracy_min': eval_accuracy_min,
+                      'eval_f1_min': test_f1_min,
+
+                      'eval_loss_med': eval_loss_med,
+                      'eval_accuracy_med': eval_accuracy_med,
+                      'eval_f1_med': test_f1_med,
+
+                      'eval_loss_max': eval_loss_max,
+                      'eval_accuracy_max': eval_accuracy_max,
+                      'eval_f1_max': test_f1_max,
+
+                      'eval_loss_inc': eval_loss_inc,
+                      'eval_accuracy_inc': eval_accuracy_inc,
+                      'eval_f1_inc': test_f1_inc,
+
+                      'eval_loss_dec': eval_loss_dec,
+                      'eval_accuracy_dec': eval_accuracy_dec,
+                      'eval_f1_dec': test_f1_dec,
+                     }
 
         # output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
         # with open(output_eval_file, "w") as writer:
@@ -540,7 +882,6 @@ class Instructor:
 if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
     args = get_config()  # Gets the user settings or default hyperparameters
-    
     processors = {
         "restaurant": RestaurantProcessor,
         "laptop": LaptopProcessor,
@@ -576,6 +917,8 @@ if __name__ == "__main__":
         'td_bert': TD_BERT,
         'td_bert_with_gcn': TD_BERT_with_GCN,
         'gcls': BertForSequenceClassification_GCLS,
+        'gcls_er': BertForSequenceClassification_GCLS_ER,
+        'scls': BertForSequenceClassification_SCLS,
         'bert_fc_gcn': BERT_FC_GCN,
         'td_bert_qa': TD_BERT_QA,
         'dtd_bert': DTD_BERT,
