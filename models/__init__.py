@@ -19,7 +19,7 @@ from models.tc_swem import TC_SWEM
 #from models.tt import TT
 from models.mlp import MLP
 from models.aen import AEN_BERT
-from models.td_bert import TD_BERT, TD_BERT_with_GCN
+from models.td_bert import TD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
 from models.td_bert_qa import TD_BERT_QA
 from models.dtd_bert import DTD_BERT
 from models.tree import Tree
