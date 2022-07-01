@@ -234,19 +234,11 @@ class Instructor:
                 weight_decay=0.00001)    
             
         self.global_step = 0  # 初始化全局步数为 0
-        self.max_test_acc = 0
-        self.max_test_acc_min = 0
-        self.max_test_acc_med = 0
-        self.max_test_acc_max = 0
-        self.max_test_acc_inc = 0
-        self.max_test_acc_dec = 0
+        self.max_test_acc_INC = 0
+        self.max_test_acc_rand = 0
         
-        self.max_test_f1 = 0
-        self.max_test_f1_min = 0
-        self.max_test_f1_med = 0
-        self.max_test_f1_max = 0
-        self.max_test_f1_inc = 0
-        self.max_test_f1_dec = 0
+        self.max_test_f1_INC = 0
+        self.max_test_f1_rand = 0
         
         self.best_L_config_acc = []
         self.best_L_config_f1 = []
@@ -308,16 +300,28 @@ class Instructor:
                     elif self.opt.model_name in ['scls']:
                         print('scls_attention_mask[0][0][:50]: ' , scls_attention_mask[0][0][:50])
                         print('scls_attention_mask[0][1][:50]: ' , scls_attention_mask[0][1][:50])
-        
+                
+                
+                ###############################################################################################
+                ###############################################################################################
+                
                 if len(self.opt.layer_L) != 12:    # layer_L = random
-#                     layer_L = list(torch.tensor(self.bernoulli.sample([12]) + 1, dtype = int))
-#                     layer_L = random.choices(self.opt.layer_L, k=12)
-#                     layer_L = random.choices([0,1], k=4) + random.choices([1,2], k=4) + random.choices([2,3], k=4)
-                    x = random.sample([3,4,5,6,7,8,9], 2)
-                    x.sort()
-                    layer_L = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+                    if i_epoch > 100:
+                        if self.global_step %2 == 0:
+                            layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
+                        else:
+                            x = random.sample([2,3,4,5,6,7,8,10], 2)
+                            x.sort()
+                            layer_L = [0 for item in range(x[0])] + [1 for item in range(x[0], x[1])] + [2 for item in range(x[1], 12)]
+                    else:
+                        layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
                 else:
                     layer_L = self.opt.layer_L
+                    
+                ###############################################################################################
+                ###############################################################################################
+                
+                
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                 elif self.opt.model_class in [BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_ER]:
@@ -424,13 +428,16 @@ class Instructor:
                     if len(self.opt.layer_L) == 12:
                         print(
                         "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
-                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc, self.max_test_f1))
+                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC))
                     else:
                         print(
                             "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f}".format(
                                 train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1']))
                         print()
-                        print(" | max_test_acc: {0:.6f} | max_test_f1: {1:.6f}".format(self.max_test_acc, self.max_test_f1))
+                        print(" | max_test_acc_INC: {0:.6f} | max_test_f1_INC: {1:.6f}".format(self.max_test_acc_INC,
+                                                                                               self.max_test_f1_INC))
+                        print(" | max_test_acc_rand: {0:.6f} | max_test_f1_rand: {1:.6f}".format(self.max_test_acc_rand,
+                                                                                                 self.max_test_f1_rand))
                         print(f" | best_L_config_acc: {self.best_L_config_acc} |")
                         print(f" | best_L_config_f1: {self.best_L_config_f1} |")
                         
@@ -457,51 +464,45 @@ class Instructor:
         if len(self.opt.layer_L) == 12:
             layer_L = self.opt.layer_L
         else:    # layer_L = random
-#             layer_L = list(torch.tensor(self.bernoulli.sample([12]) + 1, dtype = int))
-#             layer_L = random.choices(self.opt.layer_L, k=12)
-#             layer_L = random.choices([0,1], k=4) + random.choices([1,2], k=4) + random.choices([2,3], k=4)
-
-            x = random.sample([3,4,5,6,7,8,9], 2)
+            
+            ###############################################################################################
+            ############################################################################################### 
+            
+            layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
+            
+            x = random.sample([2,3,4,5,6,7,8,10], 2)
             x.sort()
-            layer_L = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            layer_L_1 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
             
-            x = random.sample([3,4,5,6,7,8,9], 2)
+            x = random.sample([2,3,4,5,6,7,8,10], 2)
             x.sort()
-            layer_L_min = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            layer_L_2 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
             
-            x = random.sample([3,4,5,6,7,8,9], 2)
+            x = random.sample([2,3,4,5,6,7,8,10], 2)
             x.sort()
-            layer_L_med = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            layer_L_3 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
             
-            x = random.sample([3,4,5,6,7,8,9], 2)
+            x = random.sample([2,3,4,5,6,7,8,10], 2)
             x.sort()
-            layer_L_max = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            layer_L_4 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
             
-            x = random.sample([3,4,5,6,7,8,9], 2)
-            x.sort()
-            layer_L_inc = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            ###############################################################################################
+            ###############################################################################################
             
-            x = random.sample([3,4,5,6,7,8,9], 2)
-            x.sort()
-            layer_L_dec = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            eval_loss_1, eval_accuracy_1 = 0, 0
+            eval_loss_2, eval_accuracy_2 = 0, 0
+            eval_loss_3, eval_accuracy_3 = 0, 0
+            eval_loss_4, eval_accuracy_4 = 0, 0
             
-            eval_loss_min, eval_accuracy_min = 0, 0
-            eval_loss_med, eval_accuracy_med = 0, 0
-            eval_loss_max, eval_accuracy_max = 0, 0
-            eval_loss_inc, eval_accuracy_inc = 0, 0
-            eval_loss_dec, eval_accuracy_dec = 0, 0
+            nb_eval_steps_1, nb_eval_examples_1 = 0, 0
+            nb_eval_steps_2, nb_eval_examples_2 = 0, 0
+            nb_eval_steps_3, nb_eval_examples_3 = 0, 0
+            nb_eval_steps_4, nb_eval_examples_4 = 0, 0
             
-            nb_eval_steps_min, nb_eval_examples_min = 0, 0
-            nb_eval_steps_med, nb_eval_examples_med = 0, 0
-            nb_eval_steps_max, nb_eval_examples_max = 0, 0
-            nb_eval_steps_inc, nb_eval_examples_inc = 0, 0
-            nb_eval_steps_dec, nb_eval_examples_dec = 0, 0
-            
-            y_pred_min = []
-            y_pred_med = []
-            y_pred_max = []
-            y_pred_inc = []
-            y_pred_dec = []
+            y_pred_1 = []
+            y_pred_2 = []
+            y_pred_3 = []
+            y_pred_4 = []
         
         for batch in tqdm(self.dataset.eval_dataloader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
@@ -540,16 +541,14 @@ class Instructor:
                     else:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L)
-                        loss_min, logits_min = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_min)
-                        loss_med, logits_med = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_med)
-                        loss_max, logits_max = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_max)
-                        loss_inc, logits_inc = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_inc)
-                        loss_dec, logits_dec = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_dec)
+                        loss_1, logits_1 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_1)
+                        loss_2, logits_2 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_2)
+                        loss_3, logits_3 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_3)
+                        loss_4, logits_4 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                                  layer_L_4)
                     
                 elif self.opt.model_class in [BertForSequenceClassification_SCLS]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask, 
@@ -617,48 +616,43 @@ class Instructor:
 
             logits = logits.detach().cpu().numpy()
             if len(self.opt.layer_L) != 12:
-                logits_min = logits_min.detach().cpu().numpy()
-                logits_med = logits_med.detach().cpu().numpy()
-                logits_max = logits_max.detach().cpu().numpy()
-                logits_inc = logits_inc.detach().cpu().numpy()
-                logits_dec = logits_dec.detach().cpu().numpy()
+                logits_1 = logits_1.detach().cpu().numpy()
+                logits_2 = logits_2.detach().cpu().numpy()
+                logits_3 = logits_3.detach().cpu().numpy()
+                logits_4 = logits_4.detach().cpu().numpy()
             
             label_ids = label_ids.to('cpu').numpy()
             tmp_eval_accuracy = accuracy(logits, label_ids)
             if len(self.opt.layer_L) != 12:
-                tmp_eval_accuracy_min = accuracy(logits_min, label_ids)
-                tmp_eval_accuracy_med = accuracy(logits_med, label_ids)
-                tmp_eval_accuracy_max = accuracy(logits_max, label_ids)
-                tmp_eval_accuracy_inc = accuracy(logits_inc, label_ids)
-                tmp_eval_accuracy_dec = accuracy(logits_dec, label_ids)
+                tmp_eval_accuracy_1 = accuracy(logits_1, label_ids)
+                tmp_eval_accuracy_2 = accuracy(logits_2, label_ids)
+                tmp_eval_accuracy_3 = accuracy(logits_3, label_ids)
+                tmp_eval_accuracy_4 = accuracy(logits_4, label_ids)
             
             y_pred.extend(np.argmax(logits, axis=1))
             if len(self.opt.layer_L) != 12:
-                y_pred_min.extend(np.argmax(logits_min, axis=1))
-                y_pred_med.extend(np.argmax(logits_med, axis=1))
-                y_pred_max.extend(np.argmax(logits_max, axis=1))
-                y_pred_inc.extend(np.argmax(logits_inc, axis=1))
-                y_pred_dec.extend(np.argmax(logits_dec, axis=1))
+                y_pred_1.extend(np.argmax(logits_1, axis=1))
+                y_pred_2.extend(np.argmax(logits_2, axis=1))
+                y_pred_3.extend(np.argmax(logits_3, axis=1))
+                y_pred_4.extend(np.argmax(logits_4, axis=1))
             
             y_true.extend(label_ids)
 
             # eval_loss += tmp_eval_loss.mean().item()
             eval_loss += loss.item()
             if len(self.opt.layer_L) != 12:
-                eval_loss_min += loss_min.item()
-                eval_loss_med += loss_med.item()
-                eval_loss_max += loss_max.item()
-                eval_loss_inc += loss_inc.item()
-                eval_loss_dec += loss_dec.item()
+                eval_loss_1 += loss_1.item()
+                eval_loss_2 += loss_2.item()
+                eval_loss_3 += loss_3.item()
+                eval_loss_4 += loss_4.item()
             
             
             eval_accuracy += tmp_eval_accuracy
             if len(self.opt.layer_L) != 12:
-                eval_accuracy_min += tmp_eval_accuracy_min
-                eval_accuracy_med += tmp_eval_accuracy_med
-                eval_accuracy_max += tmp_eval_accuracy_max
-                eval_accuracy_inc += tmp_eval_accuracy_inc
-                eval_accuracy_dec += tmp_eval_accuracy_dec
+                eval_accuracy_1 += tmp_eval_accuracy_1
+                eval_accuracy_2 += tmp_eval_accuracy_2
+                eval_accuracy_3 += tmp_eval_accuracy_3
+                eval_accuracy_4 += tmp_eval_accuracy_4
             
 
             nb_eval_examples += input_ids.size(0)
@@ -667,129 +661,107 @@ class Instructor:
         # eval_loss = eval_loss / len(self.dataset.eval_examples)
         test_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
         if len(self.opt.layer_L) != 12:
-            test_f1_min = f1_score(y_true, y_pred_min, average='macro', labels=np.unique(y_true))
-            test_f1_med = f1_score(y_true, y_pred_med, average='macro', labels=np.unique(y_true))
-            test_f1_max = f1_score(y_true, y_pred_max, average='macro', labels=np.unique(y_true))
-            test_f1_inc = f1_score(y_true, y_pred_inc, average='macro', labels=np.unique(y_true))
-            test_f1_dec = f1_score(y_true, y_pred_dec, average='macro', labels=np.unique(y_true))
+            test_f1_1 = f1_score(y_true, y_pred_1, average='macro', labels=np.unique(y_true))
+            test_f1_2 = f1_score(y_true, y_pred_2, average='macro', labels=np.unique(y_true))
+            test_f1_3 = f1_score(y_true, y_pred_3, average='macro', labels=np.unique(y_true))
+            test_f1_4 = f1_score(y_true, y_pred_4, average='macro', labels=np.unique(y_true))
         
         eval_loss = eval_loss / nb_eval_steps
         if len(self.opt.layer_L) != 12:
-            eval_loss_min = eval_loss_min / nb_eval_steps
-            eval_loss_med = eval_loss_med / nb_eval_steps
-            eval_loss_max = eval_loss_max / nb_eval_steps
-            eval_loss_inc = eval_loss_inc / nb_eval_steps
-            eval_loss_dec = eval_loss_dec / nb_eval_steps
+            eval_loss_1 = eval_loss_1 / nb_eval_steps
+            eval_loss_2 = eval_loss_2 / nb_eval_steps
+            eval_loss_3 = eval_loss_3 / nb_eval_steps
+            eval_loss_4 = eval_loss_4 / nb_eval_steps
         
         eval_accuracy = eval_accuracy / nb_eval_examples
         if len(self.opt.layer_L) != 12:
-            eval_accuracy_min = eval_accuracy_min / nb_eval_examples
-            eval_accuracy_med = eval_accuracy_med / nb_eval_examples
-            eval_accuracy_max = eval_accuracy_max / nb_eval_examples
-            eval_accuracy_inc = eval_accuracy_inc / nb_eval_examples
-            eval_accuracy_dec = eval_accuracy_dec / nb_eval_examples
+            eval_accuracy_1 = eval_accuracy_1 / nb_eval_examples
+            eval_accuracy_2 = eval_accuracy_2 / nb_eval_examples
+            eval_accuracy_3 = eval_accuracy_3 / nb_eval_examples
+            eval_accuracy_4 = eval_accuracy_4 / nb_eval_examples
         
-        if eval_accuracy > self.max_test_acc:
-            self.max_test_acc = eval_accuracy
-            self.best_L_config_acc = layer_L
-            if self.max_test_acc > 0.78 and self.opt.do_save == True:
+        if eval_accuracy > self.max_test_acc_INC:
+            self.max_test_acc_INC = eval_accuracy
+            if self.max_test_acc_INC > 0.78 and self.opt.do_save == True:
                 torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc.pkl')
                 print('='*77)
                 print('model saved at: ', self.opt.model_save_path + 'best_acc.pkl')
                 print('='*77)
-        if test_f1 > self.max_test_f1:
-            self.max_test_f1 = test_f1
-            self.best_L_config_f1 = layer_L
-            if self.max_test_f1 > 0.75 and self.opt.do_save == True:
+        if test_f1 > self.max_test_f1_INC:
+            self.max_test_f1_INC = test_f1
+            if self.max_test_f1_INC > 0.75 and self.opt.do_save == True:
                 torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1.pkl')
                 print('='*77)
                 print('model saved at: ', self.opt.model_save_path + 'best_f1.pkl')
                 print('='*77)
                 
         if len(self.opt.layer_L) != 12:
-            if eval_accuracy_min > self.max_test_acc:
-                self.max_test_acc = eval_accuracy_min
-                self.best_L_config_acc = layer_L_min
-                if self.max_test_acc > 0.78 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_min.pkl')
+            if eval_accuracy_1 > self.max_test_acc_rand:
+                self.max_test_acc_rand = eval_accuracy_1
+                self.best_L_config_acc = layer_L_1
+                if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_rand.pkl')
                     print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_acc_min.pkl')
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_rand.pkl')
                     print('='*77)
-            if test_f1_min > self.max_test_f1:
-                self.max_test_f1 = test_f1_min
-                self.best_L_config_f1 = layer_L_min
-                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_min.pkl')
+            if test_f1_1 > self.max_test_f1_rand:
+                self.max_test_f1_rand = test_f1_1
+                self.best_L_config_f1 = layer_L_1
+                if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_rand.pkl')
                     print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_f1_min.pkl')
-                    print('='*77)
-
-            if eval_accuracy_med > self.max_test_acc:
-                self.max_test_acc = eval_accuracy_med
-                self.best_L_config_acc = layer_L_med
-                if self.max_test_acc > 0.78 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_med.pkl')
-                    print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_acc_med.pkl')
-                    print('='*77)
-            if test_f1_med > self.max_test_f1:
-                self.max_test_f1 = test_f1_med
-                self.best_L_config_f1 = layer_L_med
-                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_med.pkl')
-                    print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_f1_med.pkl')
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_rand.pkl')
                     print('='*77)
 
-            if eval_accuracy_max > self.max_test_acc:
-                self.max_test_acc = eval_accuracy_max
-                self.best_L_config_acc = layer_L_max
-                if self.max_test_acc > 0.78 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_max.pkl')
+            if eval_accuracy_2 > self.max_test_acc_rand:
+                self.max_test_acc_rand = eval_accuracy_2
+                self.best_L_config_acc = layer_L_2
+                if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_rand.pkl')
                     print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_acc_max.pkl')
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_rand.pkl')
                     print('='*77)
-            if test_f1_max > self.max_test_f1:
-                self.max_test_f1 = test_f1_max
-                self.best_L_config_f1 = layer_L_max
-                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_max.pkl')
+            if test_f1_2 > self.max_test_f1_rand:
+                self.max_test_f1_rand = test_f1_2
+                self.best_L_config_f1 = layer_L_2
+                if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_rand.pkl')
                     print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_f1_max.pkl')
-                    print('='*77)
-
-            if eval_accuracy_inc > self.max_test_acc:
-                self.max_test_acc = eval_accuracy_inc
-                self.best_L_config_acc = layer_L_inc
-                if self.max_test_acc > 0.78 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_inc.pkl')
-                    print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_acc_inc.pkl')
-                    print('='*77)
-            if test_f1_inc > self.max_test_f1:
-                self.max_test_f1 = test_f1_inc
-                self.best_L_config_f1 = layer_L_inc
-                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_inc.pkl')
-                    print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_f1_inc.pkl')
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_rand.pkl')
                     print('='*77)
 
-            if eval_accuracy_dec > self.max_test_acc:
-                self.max_test_acc = eval_accuracy_dec
-                self.best_L_config_acc = layer_L_dec
-                if self.max_test_acc > 0.78 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_dec.pkl')
+            if eval_accuracy_3 > self.max_test_acc_rand:
+                self.max_test_acc_rand = eval_accuracy_3
+                self.best_L_config_acc = layer_L_3
+                if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_rand.pkl')
                     print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_acc_dec.pkl')
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_rand.pkl')
                     print('='*77)
-            if test_f1_dec > self.max_test_f1:
-                self.max_test_f1 = test_f1_dec
-                self.best_L_config_f1 = layer_L_dec
-                if self.max_test_f1 > 0.75 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_dec.pkl')
+            if test_f1_3 > self.max_test_f1_rand:
+                self.max_test_f1_rand = test_f1_3
+                self.best_L_config_f1 = layer_L_3
+                if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_rand.pkl')
                     print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + 'best_f1_dec.pkl')
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_rand.pkl')
+                    print('='*77)
+
+            if eval_accuracy_4 > self.max_test_acc_rand:
+                self.max_test_acc_rand = eval_accuracy_4
+                self.best_L_config_acc = layer_L_4
+                if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_acc_rand.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_acc_rand.pkl')
+                    print('='*77)
+            if test_f1_4 > self.max_test_f1_rand:
+                self.max_test_f1_rand = test_f1_4
+                self.best_L_config_f1 = layer_L_4
+                if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'best_f1_rand.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + 'best_f1_rand.pkl')
                     print('='*77)
         
         result = {'eval_loss': eval_loss,
@@ -801,25 +773,21 @@ class Instructor:
                       'eval_accuracy': eval_accuracy,
                       'eval_f1': test_f1,
 
-                      'eval_loss_min': eval_loss_min,
-                      'eval_accuracy_min': eval_accuracy_min,
-                      'eval_f1_min': test_f1_min,
+                      'eval_loss_1': eval_loss_1,
+                      'eval_accuracy_1': eval_accuracy_1,
+                      'eval_f1_1': test_f1_1,
 
-                      'eval_loss_med': eval_loss_med,
-                      'eval_accuracy_med': eval_accuracy_med,
-                      'eval_f1_med': test_f1_med,
+                      'eval_loss_2': eval_loss_2,
+                      'eval_accuracy_2': eval_accuracy_2,
+                      'eval_f1_2': test_f1_2,
 
-                      'eval_loss_max': eval_loss_max,
-                      'eval_accuracy_max': eval_accuracy_max,
-                      'eval_f1_max': test_f1_max,
+                      'eval_loss_3': eval_loss_3,
+                      'eval_accuracy_3': eval_accuracy_3,
+                      'eval_f1_3': test_f1_3,
 
-                      'eval_loss_inc': eval_loss_inc,
-                      'eval_accuracy_inc': eval_accuracy_inc,
-                      'eval_f1_inc': test_f1_inc,
-
-                      'eval_loss_dec': eval_loss_dec,
-                      'eval_accuracy_dec': eval_accuracy_dec,
-                      'eval_f1_dec': test_f1_dec,
+                      'eval_loss_4': eval_loss_4,
+                      'eval_accuracy_4': eval_accuracy_4,
+                      'eval_f1_4': test_f1_3,
                      }
 
         # output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
@@ -873,10 +841,11 @@ class Instructor:
         if self.opt.do_predict:
             test_accuracy = self.do_predict()
             print("Test Set Accuracy: {:.4f}".format(test_accuracy))
-        print("Max validate Set Acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc, self.max_test_f1))  # Output the final test accuracy
+        print("Max validate Set Acc_INC: {:.4f}, F1: {:.4f}".format(self.max_test_acc_INC, self.max_test_f1_INC))
+        print("Max validate Set Acc_rand: {:.4f}, F1: {:.4f}".format(self.max_test_acc_rand, self.max_test_f1_rand))  
         self.writer.close()
         # return self.max_test_acc
-        return self.max_test_acc, self.max_test_f1
+        return self.max_test_acc_INC, self.max_test_f1_INC
 
 
 if __name__ == "__main__":
