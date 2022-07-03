@@ -45,18 +45,6 @@ def get_config():
                         default=None,
                         type=str,
                         help="Initial checkpoint (usually from a pre-trained BERT model).")
-    parser.add_argument("--init_checkpoint_2",
-                        default=None,
-                        type=str,
-                        help="Initial checkpoint (usually from a pre-trained BERT model).")
-    parser.add_argument("--init_checkpoint_3",
-                        default=None,
-                        type=str,
-                        help="Initial checkpoint (usually from a pre-trained BERT model).")
-    parser.add_argument("--init_checkpoint_4",
-                        default=None,
-                        type=str,
-                        help="Initial checkpoint (usually from a pre-trained BERT model).")
     parser.add_argument("--do_lower_case",
                         default=True,
                         action='store_true',
@@ -157,28 +145,18 @@ def get_config():
                         help="The output directory where the model checkpoints will be written.")
     parser.add_argument("--load_checkpoint", default=None ,type=str,
                         help="Loading the checkpoint")
-    parser.add_argument('--gcn_data_dir', type=str, default='dataset/Restaurants')
-    parser.add_argument('--glove_dir', type=str, default='./datasets/glove')
-    parser.add_argument('--emb_dim', type=int, default=300, help='Word embedding dimension.')
-    parser.add_argument('--post_dim', type=int, default=30, help='Position embedding dimension.')
-    parser.add_argument('--pos_dim', type=int, default=30, help='Pos embedding dimension.')
-    parser.add_argument('--gcn_hidden_dim', type=int, default=50, help='GCN mem dim.')
-    parser.add_argument('--num_layers', type=int, default=2, help='Num of GCN layers.')
-    parser.add_argument('--num_class', type=int, default=3, help='Num of sentiment class used in gcn_only (CDT).')
-    parser.add_argument('--input_dropout', type=float, default=0.7, help='Input dropout rate.')
-    
-    parser.add_argument('--gcn_dropout', type=float, default=0.1, help='GCN layer dropout rate.')
+    parser.add_argument("--init_checkpoint_2",default=None,type=str,
+                        help="Initial checkpoint (usually from a pre-trained BERT model).")
+    parser.add_argument("--init_checkpoint_3",default=None,type=str,
+                        help="Initial checkpoint (usually from a pre-trained BERT model).")
+    parser.add_argument("--init_checkpoint_4",default=None,type=str,
+                        help="Initial checkpoint (usually from a pre-trained BERT model).")
     parser.add_argument('--lower', default=True, help='Lowercase all words.')
     parser.add_argument('--do_save', type = boolean_string, default=False)
     parser.add_argument('--random_eval', type = boolean_string, default=False)
     parser.add_argument('--random_config_training', type = boolean_string, default=False)
-    parser.add_argument('--loop', default=True)
-    parser.add_argument('--bidirect', default=True, help='Do use bi-RNN layer.')
     parser.add_argument('--rct_warmup', type=int, default=-1, help='The warmup epoch for rct + moe')
-    parser.add_argument('--rnn_hidden', type=int, default=50, help='RNN hidden state size.')
-    parser.add_argument('--rnn_layers', type=int, default=1, help='Number of RNN layers.')
-    parser.add_argument('--rnn_dropout', type=float, default=0.1, help='RNN dropout rate.')
-
+    
     parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
     parser.add_argument('--optim', choices=['sgd', 'adagrad', 'adam', 'adamax'], default='adamax', help='Optimizer: sgd, adagrad, adam or adamax.')
     parser.add_argument('--num_epoch', type=int, default=100, help='Number of total training epochs.')
