@@ -103,6 +103,83 @@ def load_model_ER_1(model, checkpoint, mode='student', verbose=True, DEBUG=False
         
     return model
 
+def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=None, mode='student', verbose=True, DEBUG=False):
+    """
+
+    :param model:
+    :param checkpoint:
+    :param argstrain:
+    :param mode:  this is created because for old training the encoder and classifier are mixed together
+                  also adding student mode
+    :param train_mode:
+    :param verbose:
+    :return:
+    """
+
+    local_rank = -1
+    if checkpoint1 in [None, 'None']:
+        if verbose:
+            logger.info('no checkpoint provided for %s!' % model._get_name())
+    else:
+        if not os.path.exists(checkpoint1):
+            raise ValueError('checkpoint %s not exist' % checkpoint1)
+        if verbose:
+            logger.info('loading %s finetuned model from %s' % (model._get_name(), checkpoint1))
+        model_state_dict_1 = torch.load(checkpoint1)
+        model_state_dict_2 = torch.load(checkpoint2)
+        model_state_dict_3 = torch.load(checkpoint3)
+        if checkpoint4 != None:
+            model_state_dict_4 = torch.load(checkpoint4)
+        
+#         model_state_dict_1_ = {}
+#         model_state_dict_2_ = {}
+#         model_state_dict_3_ = {}
+        
+#         for key in model_state_dict_1.keys():
+#             new_key = 'bert.'+key
+#             model_state_dict_1_[new_key] = model_state_dict_1[key]
+            
+#         for key in model_state_dict_2.keys():
+#             new_key = 'bert.'+key
+#             model_state_dict_2_[new_key] = model_state_dict_2[key]
+            
+#         for key in model_state_dict_3.keys():
+#             new_key = 'bert.'+key
+#             model_state_dict_3_[new_key] = model_state_dict_3[key]
+
+        model_keys = model.bert.state_dict().keys()
+        
+        merged_model_state_dict = model_state_dict_1.copy()
+        
+        
+#         for key in model_keys:
+#             for i in range(12,24):
+#                 if '.'+str(i)+'.' in key:
+#                     merged_model_state_dict[key] = model_state_dict_2[key.replace(f'bert.encoder.layer.{i}.',
+#                                                                                   f'encoder.layer.{i-12}.')]
+#             for i in range(24,36):
+#                 if '.'+str(i)+'.' in key:
+#                     merged_model_state_dict[key] = model_state_dict_3[key.replace(f'bert.encoder.layer.{i}.',
+#                                                                                   f'encoder.layer.{i-24}.')]
+                    
+        for key in model_keys:
+            for i in range(12,24):
+                if '.'+str(i)+'.' in key:
+                    merged_model_state_dict[key] = model_state_dict_2[key.replace(f'.{i}.', f'.{i-12}.')]
+            for i in range(24,36):
+                if '.'+str(i)+'.' in key:
+                    merged_model_state_dict[key] = model_state_dict_3[key.replace(f'.{i}.', f'.{i-24}.')]
+            if checkpoint4 != None:
+                for i in range(36,48):
+                    if '.'+str(i)+'.' in key:
+                        merged_model_state_dict[key] = model_state_dict_4[key.replace(f'.{i}.', f'.{i-36}.')]
+        
+        model.bert.load_state_dict(merged_model_state_dict)
+#         model.load_state_dict(merged_model_state_dict)
+        
+        
+    return model
+
 def load_model_init(model, checkpoint, args, mode='exact', train_mode='finetune', verbose=True, DEBUG=False):
     """
 
