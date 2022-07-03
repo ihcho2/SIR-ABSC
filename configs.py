@@ -1,5 +1,5 @@
-# Time: 2019-3-7 20:15:18
-# Author: gaozhengjie
+# Time: 2022-7-4
+# Author: Ikhyun Cho and Yoonhwa Jung
 
 import argparse
 from datetime import datetime
@@ -42,6 +42,18 @@ def get_config():
 
     ## Other parameters
     parser.add_argument("--init_checkpoint",
+                        default=None,
+                        type=str,
+                        help="Initial checkpoint (usually from a pre-trained BERT model).")
+    parser.add_argument("--init_checkpoint_2",
+                        default=None,
+                        type=str,
+                        help="Initial checkpoint (usually from a pre-trained BERT model).")
+    parser.add_argument("--init_checkpoint_3",
+                        default=None,
+                        type=str,
+                        help="Initial checkpoint (usually from a pre-trained BERT model).")
+    parser.add_argument("--init_checkpoint_4",
                         default=None,
                         type=str,
                         help="Initial checkpoint (usually from a pre-trained BERT model).")
