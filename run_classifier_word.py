@@ -6,7 +6,6 @@ from __future__ import print_function
 
 import math
 import sys
-sys.path.append('/home/gzj/anaconda3/lib/python3.6/site-packages/tqdm/')
 
 import csv
 import os
@@ -129,11 +128,13 @@ class Instructor:
         
         if self.opt.model_name in ['gcls_moe']:
             self.model = load_model_MoE(self.model, self.opt.init_checkpoint, self.opt.init_checkpoint_2, 
-                                        self.opt.init_checkpoint_3)
+                                        self.opt.init_checkpoint_3, self.opt.init_checkpoint_4)
             print('-'*77)
-            print('Loading from ', self.opt.init_checkpoint)
-            print('Loading from ', self.opt.init_checkpoint_2)
-            print('Loading from ', self.opt.init_checkpoint_3)
+            print('1st MoE BERT loading from ', self.opt.init_checkpoint)
+            print('2nd MoE BERT loading from ', self.opt.init_checkpoint_2)
+            print('3rd MoE BERT loading from ', self.opt.init_checkpoint_3)
+            print('4th MoE BERT loading from ', self.opt.init_checkpoint_4)
+            
             print('-'*77)
         else:
             if 'pytorch_model.bin' in self.opt.init_checkpoint:
@@ -236,18 +237,33 @@ class Instructor:
         self.best_L_config_acc = []
         self.best_L_config_f1 = []
         
-        ##### Checking several assertions to make the code as error-free as possible.
-        if self.opt.random_config_training == False:
-            assert len(self.opt.L_config_base) == 12
-            
+        ############### Checking several assertions for each training mode.
+        
         if self.opt.model_name in ['fc']:
             self.opt.random_config_training = False
             self.opt.random_eval = False
             
+        elif self.opt.model_name in ['gcls']:
+            if self.opt.random_config_training == False:
+                assert len(self.opt.L_config_base) == 12
+            
+        elif self.opt.model_name in ['gcls_moe', 'gcls_moe_default']:
+            self.opt.random_config_training = True
+            self.opt.random_eval = True
         
+        ###############
         
+    ###############################################################################################
+    ###############################################################################################
+    
+    def get_random_L_config(self):
+        x = random.sample([1,2,3,4,5,6,7,8,9,10,11], 3)
+        x.sort()
+        return [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], x[2])] + [3 for item in range(x[2], 12)]
         
-        
+    ###############################################################################################
+    ###############################################################################################
+    
     def do_train(self):  # 训练模型
         # for _ in trange(int(args.num_train_epochs), desc="Epoch"):
         print('# of train_examples: ', len(self.dataset.train_examples))
@@ -309,9 +325,7 @@ class Instructor:
                 
                 if self.opt.random_config_training == True:    # layer_L = random
                     if i_epoch > self.opt.rct_warmup - 1:
-                        x = random.sample([2,3,4,5,6,7,8,9,10], 2)
-                        x.sort()
-                        layer_L = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+                        layer_L = self.get_random_L_config()
                     else:
                         layer_L = self.opt.L_config_base
                 else:
@@ -453,23 +467,10 @@ class Instructor:
             ###############################################################################################
             ############################################################################################### 
             
-            layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
+            eval_layer_L = [self.opt.L_config_base]
             
-            x = random.sample([2,3,4,5,6,7,8,9,10], 2)
-            x.sort()
-            layer_L_1 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
-            
-            x = random.sample([2,3,4,5,6,7,8,9,10], 2)
-            x.sort()
-            layer_L_2 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
-            
-            x = random.sample([2,3,4,5,6,7,8,9,10], 2)
-            x.sort()
-            layer_L_3 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
-            
-            x = random.sample([2,3,4,5,6,7,8,9,10], 2)
-            x.sort()
-            layer_L_4 = [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
+            for i in range(4):
+                eval_layer_L.append(self.get_random_L_config())
             
             ###############################################################################################
             ###############################################################################################
@@ -520,18 +521,18 @@ class Instructor:
                 elif self.opt.model_class in [BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_MoE]:
                     if self.opt.random_eval == False:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              layer_L)
+                                              eval_layer_L[0])
                     else:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              layer_L)
+                                              eval_layer_L[0])
                         loss_1, logits_1 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_1)
+                                                  eval_layer_L[1])
                         loss_2, logits_2 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_2)
+                                                  eval_layer_L[2])
                         loss_3, logits_3 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_3)
+                                                  eval_layer_L[3])
                         loss_4, logits_4 = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                                  layer_L_4)
+                                                  eval_layer_L[4])
                     
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
@@ -678,7 +679,7 @@ class Instructor:
         if self.opt.random_eval == True:
             if eval_accuracy_1 > self.max_test_acc_rand:
                 self.max_test_acc_rand = eval_accuracy_1
-                self.best_L_config_acc = layer_L_1
+                self.best_L_config_acc = eval_layer_L[1]
                 if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc_rand.pkl')
                     print('='*77)
@@ -686,7 +687,7 @@ class Instructor:
                     print('='*77)
             if test_f1_1 > self.max_test_f1_rand:
                 self.max_test_f1_rand = test_f1_1
-                self.best_L_config_f1 = layer_L_1
+                self.best_L_config_f1 = eval_layer_L[1]
                 if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1_rand.pkl')
                     print('='*77)
@@ -695,7 +696,7 @@ class Instructor:
 
             if eval_accuracy_2 > self.max_test_acc_rand:
                 self.max_test_acc_rand = eval_accuracy_2
-                self.best_L_config_acc = layer_L_2
+                self.best_L_config_acc = eval_layer_L[2]
                 if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc_rand.pkl')
                     print('='*77)
@@ -703,7 +704,7 @@ class Instructor:
                     print('='*77)
             if test_f1_2 > self.max_test_f1_rand:
                 self.max_test_f1_rand = test_f1_2
-                self.best_L_config_f1 = layer_L_2
+                self.best_L_config_f1 = eval_layer_L[2]
                 if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1_rand.pkl')
                     print('='*77)
@@ -712,7 +713,7 @@ class Instructor:
 
             if eval_accuracy_3 > self.max_test_acc_rand:
                 self.max_test_acc_rand = eval_accuracy_3
-                self.best_L_config_acc = layer_L_3
+                self.best_L_config_acc = eval_layer_L[3]
                 if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc_rand.pkl')
                     print('='*77)
@@ -720,7 +721,7 @@ class Instructor:
                     print('='*77)
             if test_f1_3 > self.max_test_f1_rand:
                 self.max_test_f1_rand = test_f1_3
-                self.best_L_config_f1 = layer_L_3
+                self.best_L_config_f1 = eval_layer_L[3]
                 if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1_rand.pkl')
                     print('='*77)
@@ -729,7 +730,7 @@ class Instructor:
 
             if eval_accuracy_4 > self.max_test_acc_rand:
                 self.max_test_acc_rand = eval_accuracy_4
-                self.best_L_config_acc = layer_L_4
+                self.best_L_config_acc = eval_layer_L[4]
                 if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc_rand.pkl')
                     print('='*77)
@@ -737,7 +738,7 @@ class Instructor:
                     print('='*77)
             if test_f1_4 > self.max_test_f1_rand:
                 self.max_test_f1_rand = test_f1_4
-                self.best_L_config_f1 = layer_L_4
+                self.best_L_config_f1 = eval_layer_L[4]
                 if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1_rand.pkl')
                     print('='*77)
