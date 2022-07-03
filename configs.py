@@ -1,4 +1,4 @@
-# Time: 2022-7-4
+# Time: 2022 - 7 - 4
 # Author: Ikhyun Cho and Yoonhwa Jung
 
 import argparse
@@ -149,7 +149,7 @@ def get_config():
     parser.add_argument('--initializer', default='xavier_uniform_', type=str)
     
     ###### By Cho & Jung
-    parser.add_argument('--layer_L',
+    parser.add_argument('--L_config_base',
                         type=lambda s: [int(item) for item in s.split(',')],
                         default = None,
                         help='GCLS length L for each layer.')
@@ -158,7 +158,6 @@ def get_config():
     parser.add_argument("--load_checkpoint", default=None ,type=str,
                         help="Loading the checkpoint")
     parser.add_argument('--gcn_data_dir', type=str, default='dataset/Restaurants')
-    parser.add_argument('--gcls_length', type=int, default=0, help='gcls length.')
     parser.add_argument('--glove_dir', type=str, default='./datasets/glove')
     parser.add_argument('--emb_dim', type=int, default=300, help='Word embedding dimension.')
     parser.add_argument('--post_dim', type=int, default=30, help='Position embedding dimension.')
@@ -170,10 +169,12 @@ def get_config():
     
     parser.add_argument('--gcn_dropout', type=float, default=0.1, help='GCN layer dropout rate.')
     parser.add_argument('--lower', default=True, help='Lowercase all words.')
-    parser.add_argument('--bigcn', default=False)
     parser.add_argument('--do_save', type = boolean_string, default=False)
+    parser.add_argument('--random_eval', type = boolean_string, default=False)
+    parser.add_argument('--random_config_training', type = boolean_string, default=False)
     parser.add_argument('--loop', default=True)
     parser.add_argument('--bidirect', default=True, help='Do use bi-RNN layer.')
+    parser.add_argument('--rct_warmup', type=int, default=-1, help='The warmup epoch for rct + moe')
     parser.add_argument('--rnn_hidden', type=int, default=50, help='RNN hidden state size.')
     parser.add_argument('--rnn_layers', type=int, default=1, help='Number of RNN layers.')
     parser.add_argument('--rnn_dropout', type=float, default=0.1, help='RNN dropout rate.')
