@@ -54,7 +54,7 @@ class ReadData:
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
         
-        if opt.model_name in ['gcls', 'scls', 'gcls_moe', 'gcls_moe_default']:
+        if opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe', 'gcls_moe_default']:
             self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, opt.gcls_length)
             self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data, opt.gcls_length)
         
