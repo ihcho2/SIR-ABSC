@@ -332,7 +332,6 @@ class BERTEncoder_MoE(nn.Module):
     def forward(self, hidden_states, attention_mask, layer_L):
         all_encoder_layers = []
         fixed_L_config = [0,0,0,0,1,1,1,1,2,2,2,2]
-        
         for i in range(12):
             hidden_states = self.layer[12*layer_L[i]+i](hidden_states, attention_mask[fixed_L_config[i]])
             all_encoder_layers.append(hidden_states)
