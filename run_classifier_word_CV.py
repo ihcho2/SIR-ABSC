@@ -22,7 +22,7 @@ from optimization import BERTAdam
 
 from configs import get_config
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
-from utils.data_util import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
+from utils.data_util_CV import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
 from utils.save_and_load import load_model_MoE
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
@@ -258,9 +258,9 @@ class Instructor:
     ###############################################################################################
     
     def get_random_L_config(self):
-        x = random.sample([2,3,4,5,6,7,8,9,10], 3)
+        x = random.sample([2,3,4,5,6,7,8,9,10], 2)
         x.sort()
-        return [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], x[2])]+[3 for item in range(x[2], 12)]
+        return [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)]
     
         
     ###############################################################################################
@@ -337,7 +337,8 @@ class Instructor:
                     else:
                         layer_L = self.get_random_L_config()
 #                         layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
-                        MoE_layer = random.choices([0,1,2,3], k = 12)
+                        MoE_layer = [100]*12
+#                         MoE_layer = random.choices([0,1,2,3], k = 12)
                 else:
                     layer_L = self.opt.L_config_base
                     
@@ -440,18 +441,25 @@ class Instructor:
                 if self.global_step % self.opt.log_step == 0:
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
-                    should_test_L_config_, should_test_MoE_layer_ = self.do_eval(self.dataset.train_eval_dataloader)
                     
+                    should_test_L_config_, should_test_MoE_layer_ = self.do_eval(self.dataset.train_eval_dataloader,
+                                                                                     data_type = 'train_eval',
+                                                                                     L_config_ = self.opt.L_config_base)
+                        
                     for ii in range(len(should_test_L_config_)):
-                        _,_ = self.do_eval(self.dataset.eval_dataloader, L_config_ = should_test_L_config_[ii],
+                        _,_ = self.do_eval(self.dataset.eval_dataloader, data_type = 'test', 
+                                           L_config_ = should_test_L_config_[ii],
                                            MoE_layer_ = should_test_MoE_layer_[ii])  
                     
                     tr_loss = tr_loss / nb_tr_steps
                     
                     if self.opt.random_eval == False:
                         print(
-                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
-                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC))
+                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f}".format(
+                            train_accuracy_, train_f1, tr_loss))
+                        print(" | max_train_eval_acc_rand: {0:.6f} | max_train_eval_f1_rand:{1:.6f}".format(self.max_train_eval_acc_rand, self.max_train_eval_f1_rand))
+                        print(" | max_test_acc: {0:.6f} | max_test_f1: {1:.6f}".format(self.max_test_acc,
+                                                                                               self.max_test_f1))
                     else:
 #                         print(
 #                             "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f}".format(
@@ -467,9 +475,7 @@ class Instructor:
                         print(f" | best_MoE_layer_f1: {self.best_MoE_layer_f1} |")
                         
                         
-                self.best_MoE_layer_acc = MoE_layer
-                        
-    def do_eval(self, eval_dataloader_, L_config_= None, MoE_layer_ = None):  
+    def do_eval(self, eval_dataloader_, data_type = None, L_config_= None, MoE_layer_ = None):  
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
@@ -480,12 +486,30 @@ class Instructor:
         should_test_L_config = []
         should_test_MoE_layer = []
         
-        if L_config_ == None:
+        if self.opt.model_name == 'gcls':
             ###############################################################################################
             ############################################################################################### 
             
             layer_L = self.opt.L_config_base
-            MoE_layer = random.choices([0,1,2,3], k=12)
+            MoE_layer = [100]*12
+            
+            if data_type =='test':
+                print('-'*77)
+                print('testing on the test set')
+                print('eval_layer_L: ', layer_L)
+                print('MoE_layer: ', MoE_layer)
+                
+        elif self.opt.model_name == 'gcls_moe' and data_type == 'test':
+            layer_L = L_config_
+            MoE_layer = MoE_layer_
+            print('-'*77)
+            print('testing on the test set')
+            print('eval_layer_L: ', layer_L)
+            print('MoE_layer: ', MoE_layer)
+            
+        elif self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
+            layer_L = self.opt.L_config_base
+            MoE_layer = [100]*12
             
             layer_L_rand = []
             MoE_layer_rand = []
@@ -494,7 +518,6 @@ class Instructor:
                 layer_L_rand.append(self.get_random_L_config())
                 MoE_layer_rand.append(random.choices([0,1,2,3], k=12))
                 
-            
             ###############################################################################################
             ###############################################################################################
             
@@ -503,15 +526,8 @@ class Instructor:
             nb_eval_steps_rand = [0] * self.opt.random_eval_num
             nb_eval_examples_rand = [0] * self.opt.random_eval_num
             
-            y_pred_rand = [[],[],[],[],[],[],[],[],[],[]]
+            y_pred_rand = [[] for item in range(self.opt.random_eval_num)]
             
-        else:
-            layer_L = L_config_
-            MoE_layer = MoE_layer_
-            print('-'*77)
-            print('testing on the test set')
-            print('eval_layer_L: ', layer_L)
-            print('MoE_layer: ', MoE_layer)
             
         for batch in tqdm(eval_dataloader_, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
@@ -529,9 +545,9 @@ class Instructor:
             scls_attention_mask = []
             for item in all_input_guids:
                 if self.opt.model_name in ['gcls', 'gcls_er', 'gcls_moe']:
-                    if L_config_ == None:
+                    if data_type == 'train_eval':
                         gcls_attention_mask.append(self.train_gcls_attention_mask[2][item])
-                    else:
+                    elif data_type == 'test':
                         gcls_attention_mask.append(self.eval_gcls_attention_mask[2][item])
                     
             with torch.no_grad():
@@ -541,7 +557,7 @@ class Instructor:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L)
                 elif self.opt.model_class in [BertForSequenceClassification_GCLS_MoE]:
-                    if L_config_ != None:
+                    if data_type == 'test':
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L, MoE_layer)
                     else:
@@ -616,19 +632,19 @@ class Instructor:
                 loss = loss / args.gradient_accumulation_steps
 
             logits = logits.detach().cpu().numpy()
-            if L_config_ == None:
+            if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
                 for i in range(self.opt.random_eval_num):
                     logits_rand[i] = logits_rand[i].detach().cpu().numpy()
             
             label_ids = label_ids.to('cpu').numpy()
             tmp_eval_accuracy = accuracy(logits, label_ids)
-            if L_config_ == None:
+            if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
                 tmp_eval_accuracy_rand = [0] * self.opt.random_eval_num
                 for i in range(self.opt.random_eval_num):
                     tmp_eval_accuracy_rand[i] = accuracy(logits_rand[i], label_ids)
             
             y_pred.extend(np.argmax(logits, axis=1))
-            if L_config_ == None:
+            if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
                 for i in range(self.opt.random_eval_num):
                     y_pred_rand[i].extend(np.argmax(logits_rand[i], axis=1))
             
@@ -636,12 +652,12 @@ class Instructor:
 
             # eval_loss += tmp_eval_loss.mean().item()
             eval_loss += loss.item()
-            if L_config_ == None:
+            if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
                 for i in range(self.opt.random_eval_num):
                     eval_loss_rand[i] += loss_rand[i].item()
                     
             eval_accuracy += tmp_eval_accuracy
-            if L_config_ == None:
+            if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
                 for i in range(self.opt.random_eval_num):
                     eval_accuracy_rand[i] += tmp_eval_accuracy_rand[i]
 
@@ -650,22 +666,22 @@ class Instructor:
 
         # eval_loss = eval_loss / len(self.dataset.eval_examples)
         test_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
-        if L_config_ == None:
+        if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
             test_f1_rand = [0] * self.opt.random_eval_num
             for i in range(self.opt.random_eval_num):
                 test_f1_rand[i] = f1_score(y_true, y_pred_rand[i], average='macro', labels=np.unique(y_true))
         
         eval_loss = eval_loss / nb_eval_steps
-        if L_config_ == None:
+        if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
             for i in range(self.opt.random_eval_num):
                 eval_loss_rand[i] = eval_loss_rand[i] / nb_eval_steps
         
         eval_accuracy = eval_accuracy / nb_eval_examples
-        if L_config_ == None:
+        if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':
             for i in range(self.opt.random_eval_num):
                 eval_accuracy_rand[i] = eval_accuracy_rand[i] / nb_eval_examples
         
-        if L_config_ == None:    # means train_eval_dataloader
+        if self.opt.model_name == 'gcls_moe' and data_type == 'train_eval':    # means train_eval_dataloader
             if eval_accuracy > self.max_train_eval_acc_INC:
                 self.max_train_eval_acc_INC = eval_accuracy
                 should_test_L_config.append(self.opt.L_config_base)
@@ -688,7 +704,7 @@ class Instructor:
                         should_test_L_config.append(layer_L_rand[i])
                         should_test_MoE_layer.append(MoE_layer_rand[i])
                         
-        else:
+        elif self.opt.model_name == 'gcls_moe' and data_type == 'test':
             if eval_accuracy > self.max_test_acc:
                 self.max_test_acc = eval_accuracy
                 self.best_L_config_acc = L_config_
@@ -699,6 +715,28 @@ class Instructor:
                 self.best_L_config_f1 = L_config_
                 self.best_MoE_layer_f1 = MoE_layer_
                 
+        elif self.opt.model_name == 'gcls' and data_type == 'train_eval':
+            if eval_accuracy > self.max_train_eval_acc_INC:
+                self.max_train_eval_acc_INC = eval_accuracy
+                should_test_L_config.append(self.opt.L_config_base)
+                should_test_MoE_layer.append([100]*12)
+                
+            if test_f1 > self.max_train_eval_f1_INC:
+                self.max_train_eval_f1_INC = test_f1
+                should_test_L_config.append(self.opt.L_config_base)
+                should_test_MoE_layer.append([100]*12)
+                
+        elif self.opt.model_name == 'gcls' and data_type == 'test':
+            if eval_accuracy > self.max_test_acc:
+                self.max_test_acc = eval_accuracy
+                self.best_L_config_acc = L_config_
+                self.best_MoE_layer_acc = MoE_layer_
+                
+            if test_f1 > self.max_test_f1:
+                self.max_test_f1 = test_f1
+                self.best_L_config_f1 = L_config_
+                self.best_MoE_layer_f1 = MoE_layer_   
+                        
         return should_test_L_config, should_test_MoE_layer
 
 
