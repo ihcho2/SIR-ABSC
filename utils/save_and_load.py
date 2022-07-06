@@ -103,7 +103,7 @@ def load_model_ER_1(model, checkpoint, mode='student', verbose=True, DEBUG=False
         
     return model
 
-def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=None, mode='student', verbose=True, DEBUG=False):
+def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=None, checkpoint5 =None, mode='student', verbose=True, DEBUG=False):
     """
 
     :param model:
@@ -130,6 +130,10 @@ def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=Non
         model_state_dict_3 = torch.load(checkpoint3)
         if checkpoint4 != None:
             model_state_dict_4 = torch.load(checkpoint4)
+        if checkpoint5 != None:
+            model_state_dict_5 = torch.load(checkpoint5)
+            
+            
         
 #         model_state_dict_1_ = {}
 #         model_state_dict_2_ = {}
@@ -173,6 +177,19 @@ def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=Non
                 for i in range(36,48):
                     if '.'+str(i)+'.' in key:
                         merged_model_state_dict[key] = model_state_dict_4[key.replace(f'.{i}.', f'.{i-36}.')]
+                        
+#         if checkpoint5 != None:
+#             for key in model_keys:
+#                 for i in range(0,4):
+#                     if '.'+str(i)+'.' in key:
+#                         merged_model_state_dict[key] = model_state_dict_5['bert.'+key.replace(f'.{i}.', f'.{i}.')]
+#                 for i in range(16,20):
+#                     if '.'+str(i)+'.' in key:
+#                         merged_model_state_dict[key] = model_state_dict_5['bert.'+key.replace(f'.{i}.', f'.{i-12}.')]
+#                 for i in range(32,36):
+#                     if '.'+str(i)+'.' in key:
+#                         merged_model_state_dict[key] = model_state_dict_5['bert.'+key.replace(f'.{i}.', f'.{i-24}.')]
+                
         
         model.bert.load_state_dict(merged_model_state_dict)
 #         model.load_state_dict(merged_model_state_dict)
