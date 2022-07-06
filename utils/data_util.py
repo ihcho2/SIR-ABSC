@@ -54,9 +54,9 @@ class ReadData:
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
         
-        if opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe', 'gcls_moe_default']:
-            self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, opt.gcls_length)
-            self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data, opt.gcls_length)
+        if opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
+            self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data)
+            self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data)
         
         ######################
         
@@ -64,7 +64,7 @@ class ReadData:
         self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices, self.eval_scls_input_mask = self.get_data_loader(examples=self.eval_examples, type='eval_data')
     
     
-    def process_DG(self, DGEDT_train_data, gcls_length):
+    def process_DG(self, DGEDT_train_data):
         aspect_related_paths = [[], [], []]
         for i in range(len(DGEDT_train_data)):
             dgs = []
@@ -150,8 +150,6 @@ class ReadData:
                     tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
                                                                                         length_L_words[j][i][0][0][2]-A+1])
         
-        length = gcls_length
-            
         gcls_attention_mask = [[],[],[]]    # 2가 GCN용
         for z in range(len(length_L_words)):
             for i in range(len(length_L_words[z])):
