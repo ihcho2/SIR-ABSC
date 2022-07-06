@@ -128,12 +128,13 @@ class Instructor:
         
         if self.opt.model_name in ['gcls_moe']:
             self.model = load_model_MoE(self.model, self.opt.init_checkpoint, self.opt.init_checkpoint_2, 
-                                        self.opt.init_checkpoint_3, self.opt.init_checkpoint_4)
+                                        self.opt.init_checkpoint_3, self.opt.init_checkpoint_4, self.opt.init_checkpoint_5)
             print('-'*77)
             print('1st MoE BERT loading from ', self.opt.init_checkpoint)
             print('2nd MoE BERT loading from ', self.opt.init_checkpoint_2)
             print('3rd MoE BERT loading from ', self.opt.init_checkpoint_3)
             print('4th MoE BERT loading from ', self.opt.init_checkpoint_4)
+            print('5th MoE BERT loading from ', self.opt.init_checkpoint_5)
             
             print('-'*77)
         else:
@@ -235,6 +236,7 @@ class Instructor:
         self.max_test_f1_rand = 0
         
         self.best_L_config_acc = []
+        
         self.best_L_config_f1 = []
         
         ############### Checking several assertions for each training mode.
@@ -249,7 +251,6 @@ class Instructor:
             
         elif self.opt.model_name in ['gcls_moe', 'gcls_moe_default']:
             self.opt.random_config_training = True
-            self.opt.random_eval = True
         
         ###############
         
@@ -257,14 +258,15 @@ class Instructor:
     ###############################################################################################
     
     def get_random_L_config(self):
-        x = random.sample([1,2,3,4,5,6,7,8,9,10,11], 3)
+        x = random.sample([2,3,4,5,6,7,8,9,10], 3)
         x.sort()
         return [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], x[2])] + [3 for item in range(x[2], 12)]
+    
         
     ###############################################################################################
     ###############################################################################################
     
-    def do_train(self):  # 训练模型
+    def do_train(self):  
         # for _ in trange(int(args.num_train_epochs), desc="Epoch"):
         print('# of train_examples: ', len(self.dataset.train_examples))
         print('# of eval_examples: ', len(self.dataset.eval_examples))
@@ -323,13 +325,34 @@ class Instructor:
                 ###############################################################################################
                 ###############################################################################################
                 
-                if self.opt.random_config_training == True:    # layer_L = random
+                if self.opt.random_config_training == True:
                     if i_epoch > self.opt.rct_warmup - 1:
-                        layer_L = self.get_random_L_config()
+                        if self.global_step % 5 == 0:
+                            train_layer_L = self.get_random_L_config()
+                            print('train_layer_L changed to: ', train_layer_L)
+#                         layer_L = self.opt.L_config_base
+#                         MoE_layer = random.choices([0,1,2,3], k = 12)
+                            MoE_layer = [100]*12
                     else:
-                        layer_L = self.opt.L_config_base
+                        train_layer_L = self.opt.L_config_base
+                        MoE_layer = [100]*12
+#                         MoE_layer = random.choices([0,1,2,3], k = 12)
                 else:
-                    layer_L = self.opt.L_config_base
+                    train_layer_L = self.opt.L_config_base
+                    
+#                 if self.opt.random_config_training == True:
+#                     if self.global_step %5 == 0:
+# #                         layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
+#                         layer_L = self.opt.L_config_base
+#                         MoE_layer = [100]*12
+# #                         MoE_layer = random.choices([0,1,2,3], k = 12)
+#                     else:
+#                         layer_L = self.get_random_L_config()
+# #                         layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
+# #                         MoE_layer = random.choices([0,1,2,3], k = 12)
+#                         MoE_layer = [100]*12
+#                 else:
+#                     layer_L = self.opt.L_config_base
                     
                 ###############################################################################################
                 ###############################################################################################
@@ -337,9 +360,12 @@ class Instructor:
                 
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_MoE]:
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              layer_L)
+                                              train_layer_L)
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS_MoE]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                              train_layer_L, MoE_layer)
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -462,28 +488,40 @@ class Instructor:
         
         if self.opt.random_eval == False:
             layer_L = self.opt.L_config_base
+            MoE_layer = [0]*12
+#             layer_L = self.get_random_L_config()
+            print()
+            print('-'*77)
+            print('eval_layer_L: ', layer_L)
         else:
             
             ###############################################################################################
             ############################################################################################### 
             
             layer_L = self.opt.L_config_base
+            MoE_layer = [0]*12
+            
             layer_L_rand = []
+            MoE_layer_rand = []
             
-            random_eval_num = 4
-            
-            for i in range(random_eval_num):
+            for i in range(self.opt.random_eval_num):
                 layer_L_rand.append(self.get_random_L_config())
+                MoE_layer_rand.append([100]*12)
+#                 MoE_layer_rand.append(random.choices([0,1,2,3], k=12))
+                
+            print('layer_L: ', layer_L)
+            print('layer_L_rand: ', layer_L_rand)
+                
             
             ###############################################################################################
             ###############################################################################################
             
-            eval_loss_rand = [0] * random_eval_num
-            eval_accuracy_rand = [0] * random_eval_num
-            nb_eval_steps_rand = [0] * random_eval_num
-            nb_eval_examples_rand = [0] * random_eval_num
+            eval_loss_rand = [0] * self.opt.random_eval_num
+            eval_accuracy_rand = [0] * self.opt.random_eval_num
+            nb_eval_steps_rand = [0] * self.opt.random_eval_num
+            nb_eval_examples_rand = [0] * self.opt.random_eval_num
             
-            y_pred_rand = [[],[],[],[]]
+            y_pred_rand = [[] for i in range(self.opt.random_eval_num)]
         
         for batch in tqdm(self.dataset.eval_dataloader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
@@ -513,7 +551,7 @@ class Instructor:
             with torch.no_grad():
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_MoE]:
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
                     if self.opt.random_eval == False:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L)
@@ -521,12 +559,27 @@ class Instructor:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L)
                         
-                        loss_rand = [0] * random_eval_num
-                        logits_rand = [0] * random_eval_num
+                        loss_rand = [0] * self.opt.random_eval_num
+                        logits_rand = [0] * self.opt.random_eval_num
                         
-                        for i in range(random_eval_num):
+                        for i in range(self.opt.random_eval_num):
                             loss_rand[i], logits_rand[i] = self.model(input_ids, segment_ids, input_mask, label_ids, 
                                                                       gcls_attention_mask, layer_L_rand[i])
+                        
+                elif self.opt.model_class in [BertForSequenceClassification_GCLS_MoE]:
+                    if self.opt.random_eval == False:
+                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                              layer_L, MoE_layer)
+                    else:
+                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
+                                              layer_L, MoE_layer)
+                        
+                        loss_rand = [0] * self.opt.random_eval_num
+                        logits_rand = [0] * self.opt.random_eval_num
+                        
+                        for i in range(self.opt.random_eval_num):
+                            loss_rand[i], logits_rand[i] = self.model(input_ids, segment_ids, input_mask, label_ids, 
+                                                                      gcls_attention_mask, layer_L_rand[i], MoE_layer_rand[i])
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -590,19 +643,19 @@ class Instructor:
 
             logits = logits.detach().cpu().numpy()
             if self.opt.random_eval == True:
-                for i in range(random_eval_num):
+                for i in range(self.opt.random_eval_num):
                     logits_rand[i] = logits_rand[i].detach().cpu().numpy()
             
             label_ids = label_ids.to('cpu').numpy()
             tmp_eval_accuracy = accuracy(logits, label_ids)
             if self.opt.random_eval == True:
-                tmp_eval_accuracy_rand = [0] * random_eval_num
-                for i in range(random_eval_num):
+                tmp_eval_accuracy_rand = [0] * self.opt.random_eval_num
+                for i in range(self.opt.random_eval_num):
                     tmp_eval_accuracy_rand[i] = accuracy(logits_rand[i], label_ids)
             
             y_pred.extend(np.argmax(logits, axis=1))
             if self.opt.random_eval == True:
-                for i in range(random_eval_num):
+                for i in range(self.opt.random_eval_num):
                     y_pred_rand[i].extend(np.argmax(logits_rand[i], axis=1))
             
             y_true.extend(label_ids)
@@ -610,12 +663,12 @@ class Instructor:
             # eval_loss += tmp_eval_loss.mean().item()
             eval_loss += loss.item()
             if self.opt.random_eval == True:
-                for i in range(random_eval_num):
+                for i in range(self.opt.random_eval_num):
                     eval_loss_rand[i] += loss_rand[i].item()
                     
             eval_accuracy += tmp_eval_accuracy
             if self.opt.random_eval == True:
-                for i in range(random_eval_num):
+                for i in range(self.opt.random_eval_num):
                     eval_accuracy_rand[i] += tmp_eval_accuracy_rand[i]
 
             nb_eval_examples += input_ids.size(0)
@@ -624,18 +677,18 @@ class Instructor:
         # eval_loss = eval_loss / len(self.dataset.eval_examples)
         test_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
         if self.opt.random_eval == True:
-            test_f1_rand = [0] * random_eval_num
-            for i in range(random_eval_num):
+            test_f1_rand = [0] * self.opt.random_eval_num
+            for i in range(self.opt.random_eval_num):
                 test_f1_rand[i] = f1_score(y_true, y_pred_rand[i], average='macro', labels=np.unique(y_true))
         
         eval_loss = eval_loss / nb_eval_steps
         if self.opt.random_eval == True:
-            for i in range(random_eval_num):
+            for i in range(self.opt.random_eval_num):
                 eval_loss_rand[i] = eval_loss_rand[i] / nb_eval_steps
         
         eval_accuracy = eval_accuracy / nb_eval_examples
         if self.opt.random_eval == True:
-            for i in range(random_eval_num):
+            for i in range(self.opt.random_eval_num):
                 eval_accuracy_rand[i] = eval_accuracy_rand[i] / nb_eval_examples
         
         if eval_accuracy > self.max_test_acc_INC:
@@ -654,7 +707,7 @@ class Instructor:
                 print('='*77)
                 
         if self.opt.random_eval == True:
-            for i in range(random_eval_num):
+            for i in range(self.opt.random_eval_num):
                 if eval_accuracy_rand[i] > self.max_test_acc_rand:
                     self.max_test_acc_rand = eval_accuracy_rand[i]
                     self.best_L_config_acc = layer_L_rand[i]
@@ -679,24 +732,11 @@ class Instructor:
         else:
             result = {'eval_loss': eval_loss,
                       'eval_accuracy': eval_accuracy,
-                      'eval_f1': test_f1,
-
-                      'eval_loss_1': eval_loss_rand[0],
-                      'eval_accuracy_1': eval_accuracy_rand[0],
-                      'eval_f1_1': test_f1_rand[0],
-
-                      'eval_loss_2': eval_loss_rand[1],
-                      'eval_accuracy_2': eval_accuracy_rand[1],
-                      'eval_f1_2': test_f1_rand[1],
-
-                      'eval_loss_3': eval_loss_rand[2],
-                      'eval_accuracy_3': eval_accuracy_rand[2],
-                      'eval_f1_3': test_f1_rand[2],
-
-                      'eval_loss_4': eval_loss_rand[3],
-                      'eval_accuracy_4': eval_accuracy_rand[3],
-                      'eval_f1_4': test_f1_rand[3],
-                     }
+                      'eval_f1': test_f1, }
+            for i in range(self.opt.random_eval_num):
+                result['eval_loss_'+str(i+1)] = eval_loss_rand[i]
+                result['eval_accuracy_'+str(i+1)] = eval_accuracy_rand[i]
+                result['eval_f1_'+str(i+1)] = eval_accuracy_rand[i]
             
         return result
 
