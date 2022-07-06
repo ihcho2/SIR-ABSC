@@ -151,11 +151,14 @@ def get_config():
                         help="Initial checkpoint (usually from a pre-trained BERT model).")
     parser.add_argument("--init_checkpoint_4",default=None,type=str,
                         help="Initial checkpoint (usually from a pre-trained BERT model).")
+    parser.add_argument("--init_checkpoint_5",default=None,type=str,
+                        help="Initial checkpoint (usually from a pre-trained BERT model).")
     parser.add_argument('--lower', default=True, help='Lowercase all words.')
     parser.add_argument('--do_save', type = boolean_string, default=False)
     parser.add_argument('--random_eval', type = boolean_string, default=False)
     parser.add_argument('--random_config_training', type = boolean_string, default=False)
     parser.add_argument('--rct_warmup', type=int, default=-1, help='The warmup epoch for rct + moe')
+    parser.add_argument('--random_eval_num', type=int, default=1, help='Number of random evaluation')
     
     parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
     parser.add_argument('--optim', choices=['sgd', 'adagrad', 'adam', 'adamax'], default='adamax', help='Optimizer: sgd, adagrad, adam or adamax.')
