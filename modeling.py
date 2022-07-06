@@ -311,15 +311,14 @@ class BERTEncoder_gcls_MoE(nn.Module):
     def __init__(self, config):
         super(BERTEncoder_gcls_MoE, self).__init__()
         layer = BERTLayer(config)
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(4*config.num_hidden_layers)])
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(3*config.num_hidden_layers)])
 
-    def forward(self, hidden_states, attention_mask, layer_L):
+    def forward(self, hidden_states, attention_mask, layer_L, MoE_layer):
         all_encoder_layers = []
         
         for i in range(12):
             hidden_states = self.layer[12*layer_L[i]+i](hidden_states, attention_mask[layer_L[i]])
             all_encoder_layers.append(hidden_states)
-#             self.layer[i]
             
         return all_encoder_layers
 
@@ -327,7 +326,7 @@ class BERTEncoder_MoE(nn.Module):
     def __init__(self, config):
         super(BERTEncoder_MoE, self).__init__()
         layer = BERTLayer(config)
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(3*config.num_hidden_layers)])
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(4*config.num_hidden_layers)])
 
     def forward(self, hidden_states, attention_mask, layer_L):
         all_encoder_layers = []
@@ -335,7 +334,6 @@ class BERTEncoder_MoE(nn.Module):
         for i in range(12):
             hidden_states = self.layer[12*layer_L[i]+i](hidden_states, attention_mask[fixed_L_config[i]])
             all_encoder_layers.append(hidden_states)
-#             self.layer[i]
             
         return all_encoder_layers
 
@@ -565,7 +563,7 @@ class BertModel_GCLS_MoE(nn.Module):
         self.encoder = BERTEncoder_gcls_MoE(config)
         self.pooler = BERTPooler_gcls(config)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, gcls_attention_mask = None, layer_L = None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, gcls_attention_mask = None, layer_L = None, MoE_layer = None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -623,7 +621,7 @@ class BertModel_GCLS_MoE(nn.Module):
 #         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
         
         embedding_output = self.embeddings(input_ids, token_type_ids)
-        all_encoder_layers = self.encoder(embedding_output, extended_attention_mask_, layer_L)
+        all_encoder_layers = self.encoder(embedding_output, extended_attention_mask_, layer_L, MoE_layer)
         sequence_output = all_encoder_layers[-1]
         pooled_output = self.pooler(sequence_output)
         
@@ -862,8 +860,8 @@ class BertForSequenceClassification_GCLS_MoE(nn.Module):
                 module.bias.data.zero_()
         self.apply(init_weights)
 
-    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, gcls_attention_mask=None, layer_L = None):
-        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, gcls_attention_mask, layer_L)
+    def forward(self, input_ids, token_type_ids, attention_mask, labels=None, gcls_attention_mask=None, layer_L = None, MoE_layer = None):
+        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, gcls_attention_mask, layer_L, MoE_layer)
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
 
