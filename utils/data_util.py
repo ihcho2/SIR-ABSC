@@ -1,4 +1,4 @@
-import tokenization_word as tokenization
+import tokenization_word_roberta as tokenization
 import os
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
@@ -7,11 +7,12 @@ import numpy as np
 
 from data_utils import *
 from bucket_iterator import BucketIterator
-from bucket_iterator_2 import BucketIterator_2
+from bucket_iterator_2_roberta import BucketIterator_2
 import pickle
-from transformers import BertTokenizer
+from transformers import BertTokenizer, RobertaTokenizer
 
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+# tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 
 def length2mask(length,maxlength):
     size=list(length.size())
@@ -29,9 +30,8 @@ class ReadData:
         self.train_examples = opt.processor.get_train_examples(opt.data_dir)
         self.eval_examples = opt.processor.get_dev_examples(opt.data_dir)
         self.label_list = opt.processor.get_labels()
-
-        self.tokenizer = tokenization.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
         
+        self.tokenizer = tokenization.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
         ######################
         print('-'*100)
         print("Combining with dataloader from DGEDT (e.g. elements like dependency graphs are needed).")
@@ -43,7 +43,7 @@ class ReadData:
         elif opt.task_name == 'twitter':
             dgedt_dataset = 'twitter'
             
-        absa_dataset=pickle.load(open(dgedt_dataset+'_datas.pkl', 'rb'))
+        absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta.pkl', 'rb'))
         opt.edge_size=len(absa_dataset.edgevocab)
         self.train_data_loader = BucketIterator_2(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True)
         self.test_data_loader = BucketIterator_2(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False)
@@ -54,7 +54,7 @@ class ReadData:
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
         
-        if opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
+        if opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe', 'roberta_gcls']:
             self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data)
             self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data)
         
@@ -144,11 +144,15 @@ class ReadData:
                         Dict[len(item)-1] = [[item[-1], start_idx+A, end_idx+A]]
                 length_L_words[j].append(Dict)
 
-            for i in range(len(DGEDT_train_data)):
-                if len(length_L_words[j][i][0]) == 1:
-                    assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
-                    tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
-                                                                                        length_L_words[j][i][0][0][2]-A+1])
+#             for i in range(len(DGEDT_train_data)):
+#                 if len(length_L_words[j][i][0]) == 1:
+#                     print('-'*77)
+#                     print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1])
+#                     print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
+#                                                                                         length_L_words[j][i][0][0][2]-A+1]))
+#                     assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
+#                     tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
+#                                                                                         length_L_words[j][i][0][0][2]-A+1])
         
         gcls_attention_mask = [[],[],[]]    # 2가 GCN용
         for z in range(len(length_L_words)):
@@ -181,6 +185,7 @@ class ReadData:
         batch_size_ = DGEDT_batches['text_indices'].size(0)
         
         all_input_ids_org = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+        
         assert all_input_ids_org.size(0) == batch_size_
         ##############################
         all_input_ids = DGEDT_batches['text_indices']
@@ -190,7 +195,7 @@ class ReadData:
         
         all_input_mask_org = torch.tensor([f.input_mask for f in features], dtype=torch.long)
         ##############################
-        text_len = torch.sum(DGEDT_batches['text_indices'] != 0, dim=-1)
+        text_len = torch.sum(DGEDT_batches['text_indices'] != 1, dim=-1)
         all_input_mask = length2mask(text_len, DGEDT_batches['text_indices'].size(1))
         
         # For SCLS
@@ -198,15 +203,15 @@ class ReadData:
         for i in range(batch_size_):
             init_mask = torch.zeros([128, 128])
 #             x = (all_input_ids[i] == 102).nonzero(as_tuple=True)[0]
-            
+
 #             # 정사각형 attention matrix를 그려보면 코드 이해가 좀 더 쉽다.
 #             init_mask[:x[1]+1, :x[1]+1] = torch.ones([x[1]+1, x[1]+1])
-            
+
 #             init_mask[x[1]+1:x[2]+1, :x[0]+1] = 1
 #             init_mask[x[1]+1:x[2]+1, x[1]+1:x[2]+1] = 1
-            
+
 #             init_mask[1] = init_mask[x[1]+1]
-            
+
             scls_input_mask.append(init_mask)
             
         
@@ -220,11 +225,11 @@ class ReadData:
         
         ########## When target is appended at the end or the beginning.
         for i in range(batch_size_):
-            x = (all_input_ids[i] == 102).nonzero(as_tuple=True)[0]
-#             all_segment_ids[i][x[0]+1:x[1]+1] = 1
+            x = (all_input_ids[i] == 2).nonzero(as_tuple=True)[0]
+            all_segment_ids[i][x[0]+1:x[-1]+1] = 1
             
             # For SCLS
-            all_segment_ids[i][x[0]+1:x[-1]+1] = 1
+#             all_segment_ids[i][x[0]+1:x[-1]+1] = 1
             
         ##########
         
@@ -250,12 +255,6 @@ class ReadData:
         all_input_t_ids_org = torch.tensor([f.input_t_ids for f in features], dtype=torch.long)
         ##############################
         all_input_t_ids = DGEDT_batches['aspect_indices']
-        count = 0 
-        for i in range(batch_size_):
-            if sum(all_input_t_ids_org[i] - all_input_t_ids[i]) != 0:
-                count += 1
-        assert count/all_input_t_ids.size(0) < 0.02
-        # Less than 2% is slightly different between DGEDT and TD-BERT aspect indices. 
         ##############################
         
         
@@ -316,7 +315,7 @@ class ReadData:
         for i in range(batch_size_):
             aspect_start_idx = DGEDT_batches['tran_indices'][i][DGEDT_batches['span_indices'][i][0][0]][0] + 1
             input_left_ids[i][:aspect_start_idx] = DGEDT_batches['text_indices'][i][:aspect_start_idx]
-            input_left_ids[i][aspect_start_idx] = 102    # [SEP]
+            input_left_ids[i][aspect_start_idx] = 2    # [SEP]
             
         # 점검
 #         for i in range(batch_size_):
@@ -415,23 +414,27 @@ class ReadData:
             # the entire model is fine-tuned.
             tokens = []
             segment_ids = []
-            tokens.append("[CLS]")
+            tokens.append("<s>")
             segment_ids.append(0)
             for token in tokens_a:
+                if token == '[UNK]':
+                    token = 'unk'
                 tokens.append(token)
                 segment_ids.append(0)
-            tokens.append("[SEP]")
+            tokens.append("</s>")
             segment_ids.append(0)
 
             if tokens_aspect:  # if not None
                 tokens_t = []
                 segment_t_ids = []
-                tokens_t.append("[CLS]")
+                tokens_t.append("<s>")
                 segment_t_ids.append(0)
                 for token in tokens_aspect:
+                    if token == '[UNK]':
+                        token = 'unk'
                     tokens_t.append(token)
                     segment_t_ids.append(0)
-                tokens_t.append("[SEP]")
+                tokens_t.append("</s>")
                 segment_t_ids.append(0)
                 input_t_ids = tokenizer.convert_tokens_to_ids(tokens_t)
                 input_t_mask = [1] * len(input_t_ids)
@@ -445,12 +448,14 @@ class ReadData:
                 # The following is the case where the target word is removed from the processing sentence, tokens_text_without_target
                 tokens_without_target = []
                 segment_without_t_ids = []
-                tokens_without_target.append("[CLS]")
+                tokens_without_target.append("<s>")
                 segment_without_t_ids.append(0)
                 for token in tokens_text_without_target:
+                    if token == '[UNK]':
+                        token = 'unk'
                     tokens_without_target.append(token)
                     segment_without_t_ids.append(0)
-                tokens_without_target.append("[SEP]")
+                tokens_without_target.append("</s>")
                 segment_without_t_ids.append(0)
                 input_without_t_ids = tokenizer.convert_tokens_to_ids(tokens_without_target)
                 input_without_t_mask = [1] * len(input_without_t_ids)
@@ -464,12 +469,14 @@ class ReadData:
                 # The following is the sentence processing the left side of the target word, containing the target word, tokens_text_left_with_aspect
                 tokens_left_target = []
                 segment_left_t_ids = []
-                tokens_left_target.append("[CLS]")
+                tokens_left_target.append("<s>")
                 segment_left_t_ids.append(0)
                 for token in tokens_text_left_with_target:
+                    if token == '[UNK]':
+                        token = 'unk'
                     tokens_left_target.append(token)
                     segment_left_t_ids.append(0)
-                tokens_left_target.append("[SEP]")
+                tokens_left_target.append("</s>")
                 segment_left_t_ids.append(0)
                 input_left_t_ids = tokenizer.convert_tokens_to_ids(tokens_left_target)
                 input_left_t_mask = [1] * len(input_left_t_ids)
@@ -483,12 +490,14 @@ class ReadData:
                 # The following is the sentence processing the right side of the target word, containing the target word, tokens_text_right_with_aspect
                 tokens_right_target = []
                 segment_right_t_ids = []
-                tokens_right_target.append("[CLS]")
+                tokens_right_target.append("<s>")
                 segment_right_t_ids.append(0)
                 for token in tokens_text_right_with_target:
+                    if token == '[UNK]':
+                        token = 'unk'
                     tokens_right_target.append(token)
                     segment_right_t_ids.append(0)
-                tokens_right_target.append("[SEP]")
+                tokens_right_target.append("</s>")
                 segment_right_t_ids.append(0)
                 input_right_t_ids = tokenizer.convert_tokens_to_ids(tokens_right_target)
                 input_right_t_mask = [1] * len(input_right_t_ids)
@@ -502,12 +511,14 @@ class ReadData:
                 # The following are sentences that process the left side of the target word and do not contain the target word, tokens_text_left
                 tokens_left = []
                 segment_left_ids = []
-                tokens_left.append("[CLS]")
+                tokens_left.append("<s>")
                 segment_left_ids.append(0)
                 for token in tokens_text_left:
+                    if token == '[UNK]':
+                        token = 'unk'
                     tokens_left.append(token)
                     segment_left_ids.append(0)
-                tokens_left.append("[SEP]")
+                tokens_left.append("</s>")
                 segment_left_ids.append(0)
                 input_left_ids = tokenizer.convert_tokens_to_ids(tokens_left)
                 input_left_mask = [1] * len(input_left_ids)
@@ -522,9 +533,11 @@ class ReadData:
 
             if tokens_b:
                 for token in tokens_b:
+                    if token == '[UNK]':
+                        token = 'unk'
                     tokens.append(token)
                     segment_ids.append(1)
-                tokens.append("[SEP]")
+                tokens.append("</s>")
                 segment_ids.append(1)
 
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
