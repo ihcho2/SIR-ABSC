@@ -28,9 +28,11 @@ import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
 from data_utils import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaForSequenceClassification
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls
 
 from torch.distributions.bernoulli import Bernoulli
+
+from torch.optim.lr_scheduler import LambdaLR
 
 # tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
@@ -101,7 +103,7 @@ class Instructor:
         self.eval_tran_indices = self.dataset.eval_tran_indices
         self.eval_span_indices = self.dataset.eval_span_indices
         
-        if args.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
+        if args.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe', 'roberta_gcls']:
             self.train_gcls_attention_mask = self.dataset.train_gcls_attention_mask
             
             self.eval_gcls_attention_mask = self.dataset.eval_gcls_attention_mask
@@ -123,6 +125,8 @@ class Instructor:
         elif args.model_class == RobertaForSequenceClassification:
 #             self.model = RobertaForSequenceClassification(roberta_config)
             self.model = RobertaForSequenceClassification.from_pretrained('roberta-base')
+        elif args.model_class == RobertaForSequenceClassification_gcls:
+            self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base')
         elif args.model_class == BertForSequenceClassification_GCLS:
             self.model = BertForSequenceClassification_GCLS(bert_config, len(self.dataset.label_list))
         elif args.model_class == BertForSequenceClassification_GCLS_MoE:
@@ -142,7 +146,7 @@ class Instructor:
             
             print('-'*77)
         else:
-            if args.model_name != 'roberta' and 'pytorch_model.bin' in self.opt.init_checkpoint:
+            if args.model_name not in ['roberta', 'roberta_gcls'] and 'pytorch_model.bin' in self.opt.init_checkpoint:
                 self.model.load_state_dict(torch.load(self.opt.init_checkpoint, map_location='cpu'))
                 print('-'*77)
                 print('Loading from ', self.opt.init_checkpoint)
@@ -199,7 +203,7 @@ class Instructor:
             
             self.optimizer_gcn = None
         
-        elif args.model_name in ['roberta']:
+        elif args.model_name in ['roberta', 'roberta_gcls']:
             optimizer_grouped_parameters = [
                 {'params': [p for n, p in self.param_optimizer if n not in no_decay],
                  'weight_decay_rate': 0.01},
@@ -207,6 +211,8 @@ class Instructor:
                  'weight_decay_rate': 0.0}
             ]
             self.optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8)
+            scheduler = LambdaLR(self.optimizer, lr_lambda = lambda epoch: 0.95 ** epoch)
+            
             self.optimizer_gcn = None
         elif args.model_name in ['td_bert_with_gcn', 'bert_fc_gcn']:
             optimizer_grouped_parameters = [
@@ -258,7 +264,7 @@ class Instructor:
             self.opt.random_config_training = False
             self.opt.random_eval = False
             
-        elif self.opt.model_name in ['gcls']:
+        elif self.opt.model_name in ['gcls', 'roberta_gcls']:
             if self.opt.random_config_training == False:
                 assert len(self.opt.L_config_base) == 12
             
@@ -320,7 +326,7 @@ class Instructor:
                 for item in all_input_guids:
                     tran_indices.append(self.train_tran_indices[item])
                     span_indices.append(self.train_span_indices[item])
-                    if self.opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
+                    if self.opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe', 'roberta_gcls']:
                         gcls_attention_mask.append(self.train_gcls_attention_mask[2][item])
                     if self.opt.model_name in ['scls']:
                         scls_attention_mask.append(self.train_scls_input_mask[item])
@@ -331,7 +337,7 @@ class Instructor:
                     print('segment_ids: ', segment_ids[0][:50])
                     print('input_mask: ', input_mask[0][:50])
                     print('guid: ', all_input_guids[0])
-                    if self.opt.model_name in ['gcls', 'gcls_moe']:
+                    if self.opt.model_name in ['gcls', 'gcls_moe', 'roberta_gcls']:
                         print('gcls_attention_mask[0][:50]: ', gcls_attention_mask[0][:50])
                 
                 
@@ -375,6 +381,9 @@ class Instructor:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                 elif self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
+                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask = gcls_attention_mask, 
+                                              layer_L=train_layer_L)[:2]
                 elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               train_layer_L)
@@ -466,6 +475,7 @@ class Instructor:
                     self.model.zero_grad()
                     self.global_step += 1
                 if self.global_step % self.opt.log_step == 0:
+                    print('lr: ', self.optimizer.param_groups[0]['lr'])
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
                     result = self.do_eval()
@@ -560,7 +570,7 @@ class Instructor:
             for item in all_input_guids:
                 tran_indices.append(self.eval_tran_indices[item])
                 span_indices.append(self.eval_span_indices[item])
-                if self.opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
+                if self.opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe', 'roberta_gcls']:
                     gcls_attention_mask.append(self.eval_gcls_attention_mask[2][item])
                     
             with torch.no_grad():
@@ -568,6 +578,9 @@ class Instructor:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                 elif self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
+                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask=gcls_attention_mask, 
+                                              layer_L=layer_L)[:2]
                 elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
                     if self.opt.random_eval == False:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
@@ -822,6 +835,7 @@ if __name__ == "__main__":
         'cnn': CNN,
         'fc': BertForSequenceClassification,
         'roberta': RobertaForSequenceClassification,
+        'roberta_gcls': RobertaForSequenceClassification_gcls,
         'clstm': CLSTM,
         'pf_cnn': PF_CNN,
         'tcn': TCN,
