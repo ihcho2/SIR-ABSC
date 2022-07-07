@@ -22,7 +22,13 @@ def get_config():
     parser.add_argument("--bert_config_file",
                         default=None,
                         type=str,
-                        required=True,
+                        required=False,
+                        help="The config json file corresponding to the pre-trained BERT model. \n"
+                             "This specifies the model architecture.")
+    parser.add_argument("--roberta_config_file",
+                        default=None,
+                        type=str,
+                        required=False,
                         help="The config json file corresponding to the pre-trained BERT model. \n"
                              "This specifies the model architecture.")
     parser.add_argument("--task_name",
