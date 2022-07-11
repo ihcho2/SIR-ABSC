@@ -54,7 +54,7 @@ class ReadData:
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
         
-        if opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
+        if opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe', 'roberta_gcls', 'roberta_gcls_moe']:
             self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data)
             self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data)
         
@@ -144,11 +144,15 @@ class ReadData:
                         Dict[len(item)-1] = [[item[-1], start_idx+A, end_idx+A]]
                 length_L_words[j].append(Dict)
 
-            for i in range(len(DGEDT_train_data)):
-                if len(length_L_words[j][i][0]) == 1:
-                    assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
-                    tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
-                                                                                        length_L_words[j][i][0][0][2]-A+1])
+#             for i in range(len(DGEDT_train_data)):
+#                 if len(length_L_words[j][i][0]) == 1:
+#                     print('-'*77)
+#                     print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1])
+#                     print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
+#                                                                                         length_L_words[j][i][0][0][2]-A+1]))
+#                     assert tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices'])[1:-1] == \
+#                     tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices'][length_L_words[j][i][0][0][1]-A+1:
+#                                                                                         length_L_words[j][i][0][0][2]-A+1])
         
         gcls_attention_mask = [[],[],[]]    # 2가 GCN용
         for z in range(len(length_L_words)):
