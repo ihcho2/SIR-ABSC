@@ -147,6 +147,14 @@ def get_config():
                         type=lambda s: [int(item) for item in s.split(',')],
                         default = None,
                         help='GCLS length L for each layer.')
+    parser.add_argument('--g_config',
+                        type=lambda s: [int(item) for item in s.split(',')],
+                        default = None,
+                        help='g_config for each layer.')
+    parser.add_argument('--gcls_att_cumul',
+                        type= boolean_string, default = False)
+    parser.add_argument('--gcls_pos', type=int, default=1)
+    
     parser.add_argument("--model_save_path", default=None ,type=str,
                         help="The output directory where the model checkpoints will be written.")
     parser.add_argument("--load_checkpoint", default=None ,type=str,
