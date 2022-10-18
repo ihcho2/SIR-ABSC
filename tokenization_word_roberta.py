@@ -73,7 +73,7 @@ def load_vocab(vocab_file):
     index_vocab = collections.OrderedDict()
     index = 0
     
-    with open('/home/ikhyuncho23/ABSC/roberta_files/vocab.json', 'r') as f:
+    with open('/home/ikhyuncho23/GoBERTa/roberta_files/vocab.json', 'r') as f:
         data = json.load(f)
         
     for item in data:
