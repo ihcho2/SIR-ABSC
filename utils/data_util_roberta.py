@@ -29,6 +29,8 @@ class ReadData:
         self.opt = opt
         self.train_examples = opt.processor.get_train_examples(opt.data_dir)
         self.eval_examples = opt.processor.get_dev_examples(opt.data_dir)
+        if opt.task_name == 'mams':
+            self.eval_examples_2 = opt.processor.get_test_examples(opt.data_dir)
         self.label_list = opt.processor.get_labels()
         
         self.tokenizer = tokenization.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
@@ -42,6 +44,8 @@ class ReadData:
             dgedt_dataset = 'rest14'
         elif opt.task_name == 'tweet':
             dgedt_dataset = 'twitter'
+        elif opt.task_name == 'mams':
+            dgedt_dataset = 'mams'
             
         absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta.pkl', 'rb'))
         opt.edge_size=len(absa_dataset.edgevocab)
@@ -303,7 +307,6 @@ class ReadData:
 
 #             if torch.sum(gcls_attention_mask[i][1]) - torch.sum(gcls_attention_mask[i][0]) != 2:
 #                 print('='*77)
-#                 print('sex')
 #                 print(i)
 #                 print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices']))
 #                 print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices']))
@@ -362,6 +365,8 @@ class ReadData:
             DGEDT_batches = self.DGEDT_test_batches[0]
             DGEDT_data = self.DGEDT_test_data    # 점검용
         
+        print(type)
+        print('='*77)
         batch_size_ = DGEDT_batches['text_indices'].size(0)
         
         all_input_ids_org = torch.tensor([f.input_ids for f in features], dtype=torch.long)
@@ -1019,7 +1024,63 @@ class LaptopProcessor(DataProcessor):
                              text_left=text_left))
         return examples
 
+class MamsProcessor(DataProcessor):
+    def __init__(self):
+        self.labels = set()
 
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "train.raw")), "train")
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "validation.raw")), "dev")
+    
+    def get_test_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "test.raw")), "dev")
+
+    def get_labels(self):
+        """See base class."""
+        if len(self.labels) == 3:
+            return ['-1', '0', '1']
+        elif len(self.labels) == 4:
+            return ['positive', 'neutral', 'negative', 'conflict']
+        else:
+            return list(self.labels)
+
+    def _create_examples(self, lines, set_type):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        j = 0
+        # if set_type == 'train':
+        #     del_list = np.random.choice(range(0, len(lines), 3), 600, replace=False)  # Not repeated
+        for i in range(0, len(lines), 3):
+            # if set_type == 'train' and i in del_list:
+            #     continue
+            guid = "%s-%s" % (set_type, j)
+            j += 1
+            text_left, _, text_right = [s.lower().strip() for s in lines[i][0].partition("$T$")]
+            aspect = lines[i + 1][0].lower().strip()
+            text_a = text_left + " " + aspect + " " + text_right  # sentence
+            text_b = "What do you think of the " + aspect + " of it ?"
+            label = lines[i + 2][0].strip()  # label
+            self.labels.add(label)
+            text_without_aspect = text_left + " " + text_right
+            text_left_with_aspect = text_left + " " + aspect
+            text_right_with_aspect = aspect + " " + text_right  # Note that there is no reverse order
+
+            examples.append(
+                InputExample(guid=guid, text_a=text_a, text_b=None, label=label, aspect=aspect,
+                             text_without_target=text_without_aspect,
+                             text_left_with_target=text_left_with_aspect,
+                             text_right_with_target=text_right_with_aspect,
+                             text_left=text_left))
+        return examples
+    
 class TweetProcessor(DataProcessor):
     def __init__(self):
         self.labels = set()
