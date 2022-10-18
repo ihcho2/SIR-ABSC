@@ -21,7 +21,7 @@ from modeling import BertConfig, BertForSequenceClassification, BertForSequenceC
 from optimization import BERTAdam
 
 from configs import get_config
-from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN, BERT_LCF
+from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
 from utils.data_util_roberta import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
 from utils.save_and_load import load_model_MoE, load_model_roberta_rpt
 import torch.nn.functional as F
@@ -128,11 +128,11 @@ class Instructor:
             self.model = RobertaForSequenceClassification.from_pretrained('roberta-base')
     
         elif args.model_class == RobertaForSequenceClassification_gcls:
-            if args.graph_s_pooler == 'att':
+            if args.g_pooler == 'att':
                 self.model = RobertaForSequenceClassification_gcls_att.from_pretrained('roberta-base')
-            elif args.graph_s_pooler == 'avg':
+            elif args.g_pooler == 'avg':
                 self.model = RobertaForSequenceClassification_gcls_avg.from_pretrained('roberta-base')
-            elif args.graph_s_pooler == 'max':
+            elif args.g_pooler == 'max':
                 self.model = RobertaForSequenceClassification_gcls_max.from_pretrained('roberta-base')
             
         elif args.model_class == RobertaForSequenceClassification_gcls_2:
@@ -350,16 +350,7 @@ class Instructor:
                 if self.optimizer_gcn != None:
                     self.optimizer_gcn.zero_grad()
                 
-                input_ids, graph_s_pos, input_ids_lcf_global, input_ids_lcf_local, input_mask, input_mask_lcf_global, \
-                input_mask_lcf_local, \
-                segment_ids, segment_ids_lcf_global, segment_ids_lcf_local, label_ids, \
-                input_t_ids, input_t_mask, segment_t_ids, \
-                input_without_t_ids, input_without_t_mask, segment_without_t_ids, \
-                input_left_t_ids, input_left_t_mask, segment_left_t_ids, \
-                input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
-                input_left_ids, input_left_mask, segment_left_ids, \
-                all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids, train_gcls_attention_mask = batch
-                               
+                input_ids, label_ids, all_input_guids = batch
                 if self.opt.model_name in ['roberta_lcf', 'roberta_lcf_td']:
                     input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
                     input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
@@ -368,9 +359,6 @@ class Instructor:
                     input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
                 elif self.opt.model_name in ['roberta_gcls']:
                     input_ids = input_ids.to(self.opt.device)
-                    segment_ids = segment_ids.to(self.opt.device)
-                    input_mask = input_mask.to(self.opt.device)
-#                     train_gcls_attention_mask = train_gcls_attention_mask.to(self.opt.device)
                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                 else:
                     input_ids = input_ids.to(self.opt.device)
@@ -445,29 +433,23 @@ class Instructor:
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                     
-                elif self.opt.model_class in [BERT_LCF]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, segment_ids_lcf_global,
-                                              segment_ids_lcf_local, input_mask_lcf_global, input_mask_lcf_local, label_ids)
-                    
                 elif self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
-                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask = None, 
-                                              layer_L=train_layer_L, layer_L_set = train_layer_L_set, 
-                                              g_config = self.train_g_config, gcls_pos = self.opt.gcls_pos, 
-                                              graph_s_pos = graph_s_pos, extended_attention_mask = train_extended_attention_mask)[:2]
+                    loss, logits = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = train_extended_attention_mask)[:2]
                 
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_2]:
                     loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask = gcls_attention_mask, 
                                               gcls_attention_mask_2 = gcls_attention_mask_2,
                                               layer_L=train_layer_L, layer_L_2 = train_layer_L_2, g_config = self.train_g_config, 
-                                              gcls_pos = self.opt.gcls_pos)[:2]
+                                              g_token_pos = self.opt.g_token_pos)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
                     loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
                                               gcls_attention_mask = gcls_attention_mask, layer_L=train_layer_L, 
-                                              g_config = self.train_g_config, gcls_pos = self.opt.gcls_pos, 
+                                              g_config = self.train_g_config, g_token_pos = self.opt.g_token_pos, 
                                               target_idx = torch.tensor(train_target_idx))[:2]
                 
                 elif self.opt.model_class in [RobertaForSequenceClassification_asc_td]:
@@ -576,7 +558,7 @@ class Instructor:
                     self.model.zero_grad()
                     self.global_step += 1
                     
-                if self.global_step % self.opt.log_step == 0 and i_epoch > 3:
+                if self.global_step % self.opt.log_step == 0 and i_epoch > -1:
                     print('lr: ', self.optimizer.param_groups[0]['lr'])
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
@@ -615,19 +597,10 @@ class Instructor:
         
         layer_L = self.opt.L_config_base
         layer_L_set = set(layer_L)
-        layer_L_2 = self.opt.L_config_base_2
         
         for batch in tqdm(self.dataset.eval_dataloader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
-            input_ids, graph_s_pos, input_ids_lcf_global, input_ids_lcf_local, input_mask, input_mask_lcf_global, \
-            input_mask_lcf_local, \
-            segment_ids, segment_ids_lcf_global, segment_ids_lcf_local, label_ids, \
-            input_t_ids, input_t_mask, segment_t_ids, \
-            input_without_t_ids, input_without_t_mask, segment_without_t_ids, \
-            input_left_t_ids, input_left_t_mask, segment_left_t_ids, \
-            input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
-            input_left_ids, input_left_mask, segment_left_ids, \
-            all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids, eval_gcls_attention_mask = batch
+            input_ids, label_ids, all_input_guids = batch
                 
                 
             if self.opt.model_name in ['roberta_lcf', 'roberta_lcf_td']:
@@ -639,12 +612,7 @@ class Instructor:
                 input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
             elif self.opt.model_name in ['roberta_gcls']:
                 input_ids = input_ids.to(self.opt.device)
-                segment_ids = segment_ids.to(self.opt.device)
-                input_mask = input_mask.to(self.opt.device)
-#                 time_0 = time.time()
-#                 eval_gcls_attention_mask = eval_gcls_attention_mask.to(self.opt.device)
                 eval_extended_attention_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
-#                 print('eval_time: ', time.time() - time_0)
             else:
                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
@@ -659,30 +627,24 @@ class Instructor:
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                     
-                elif self.opt.model_class in [BERT_LCF]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, segment_ids_lcf_global,
-                                              segment_ids_lcf_local, input_mask_lcf_global, input_mask_lcf_local, label_ids)
-                    
                 elif self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
-                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask=None, 
-                                              layer_L=layer_L, layer_L_set = layer_L_set, g_config = self.train_g_config, 
-                                              gcls_pos = self.opt.gcls_pos, graph_s_pos = graph_s_pos, 
+                    loss, logits = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = eval_extended_attention_mask)[:2]
                   
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_2]:
                     loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask=gcls_attention_mask,
                                               gcls_attention_mask_2=gcls_attention_mask_2,
                                               layer_L=layer_L, layer_L_2 = layer_L_2, g_config = self.train_g_config, 
-                                              gcls_pos = self.opt.gcls_pos,
+                                              g_token_pos = self.opt.g_token_pos,
                                               target_idx = torch.tensor(eval_target_idx))[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
                     loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
                                               gcls_attention_mask=gcls_attention_mask, layer_L=layer_L, 
-                                              g_config = self.train_g_config, gcls_pos = self.opt.gcls_pos,
+                                              g_config = self.train_g_config, g_token_pos = self.opt.g_token_pos,
                                               target_idx = torch.tensor(eval_target_idx))[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_asc_td]:
@@ -907,7 +869,6 @@ if __name__ == "__main__":
         'mlp': MLP,
         'aen': AEN_BERT,
         'td_bert': TD_BERT,
-        'bert_lcf': BERT_LCF,
         'td_bert_with_gcn': TD_BERT_with_GCN,
         'gcls': BertForSequenceClassification_GCLS,
         'gcls_moe': BertForSequenceClassification_GCLS_MoE,
