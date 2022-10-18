@@ -153,8 +153,18 @@ def get_config():
                         help='g_config for each layer.')
     parser.add_argument('--gcls_att_cumul',
                         type= boolean_string, default = False)
-    parser.add_argument('--gcls_pos', type=int, default=1)
-    
+    parser.add_argument('--g_token_pos', type=int, default=1)
+    parser.add_argument("--graph_type",
+                        type=str,
+                        help="surface distance or dependency graph distance"),
+    parser.add_argument("--path_types",
+                        type=int,
+                        default = 1,
+                        help="Whether we distinguish dependency graph path types."),
+    parser.add_argument("--g_pooler",
+                        type=str,
+                        default = 'att',
+                        help="The pooler type, one of att, avg, max."),
     parser.add_argument("--model_save_path", default=None ,type=str,
                         help="The output directory where the model checkpoints will be written.")
     parser.add_argument("--load_checkpoint", default=None ,type=str,
