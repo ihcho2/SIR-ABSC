@@ -360,6 +360,8 @@ class Instructor:
                 elif self.opt.model_name in ['roberta_gcls']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
+                elif self.opt.model_name in ['roberta']:
+                    input_ids = input_ids.to(self.opt.device)
                 else:
                     input_ids = input_ids.to(self.opt.device)
                     segment_ids = segment_ids.to(self.opt.device)
@@ -613,6 +615,8 @@ class Instructor:
             elif self.opt.model_name in ['roberta_gcls']:
                 input_ids = input_ids.to(self.opt.device)
                 eval_extended_attention_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
+            elif self.opt.model_name in ['roberta']:
+                input_ids = input_ids.to(self.opt.device)
             else:
                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
