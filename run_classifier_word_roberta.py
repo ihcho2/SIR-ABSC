@@ -392,7 +392,7 @@ class Instructor:
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
                         print('guid: ', all_input_guids[0])
-                        print('gcls_attention_mask[0][:5]: ', train_gcls_attention_mask[0][:5])
+                        print('train_extended_attention_mask[0][:5]: ', train_extended_attention_mask[0][0][0][1])
                         
                         
                     elif self.opt.model_name in ['roberta_gcls_2']:
