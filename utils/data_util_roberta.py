@@ -30,7 +30,7 @@ class ReadData:
         self.train_examples = opt.processor.get_train_examples(opt.data_dir)
         self.eval_examples = opt.processor.get_dev_examples(opt.data_dir)
         if opt.task_name == 'mams':
-            self.eval_examples_2 = opt.processor.get_test_examples(opt.data_dir)
+            self.validation_examples = opt.processor.get_validation_examples(opt.data_dir)
         self.label_list = opt.processor.get_labels()
         
         self.tokenizer = tokenization.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
@@ -49,14 +49,21 @@ class ReadData:
             
         absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta.pkl', 'rb'))
         opt.edge_size=len(absa_dataset.edgevocab)
+        
         self.train_data_loader = BucketIterator_2(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True)
         self.test_data_loader = BucketIterator_2(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False)
+        if opt.task_name == 'mams':
+            self.eval_data_loader = BucketIterator_2(data=absa_dataset.validation_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False)
         
         self.DGEDT_train_data = self.train_data_loader.data
         self.DGEDT_train_batches = self.train_data_loader.batches
         
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
+        
+        if opt.task_name == 'mams':
+            self.DGEDT_validation_data = self.eval_data_loader.data
+            self.DGEDT_validation_batches = self.eval_data_loader.batches
         
         if opt.model_name in ['gcls', 'scls', 'roberta', 'gcls_er', 'gcls_moe', 'roberta_gcls', 'roberta_gcls_2', 'roberta_gcls_moe', 'roberta_td', 'roberta_lcf_td', 'roberta_gcls_td', 'roberta_asc_td']:
             
@@ -65,10 +72,15 @@ class ReadData:
                                                                  path_types = self.opt.path_types)
                 self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data, self.opt.L_config_base, 
                                                                  path_types = self.opt.path_types)
+                if opt.task_name == 'mams':
+                    self.validation_gcls_attention_mask = self.process_DG(self.DGEDT_validation_data, self.opt.L_config_base, 
+                                                                 path_types = self.opt.path_types)
                 
             elif opt.graph_type == 'sd':
                 self.train_gcls_attention_mask  = self.process_surface_distance(self.DGEDT_train_data, self.opt.L_config_base)
                 self.eval_gcls_attention_mask = self.process_surface_distance(self.DGEDT_test_data, self.opt.L_config_base)
+                self.validation_gcls_attention_mask = self.process_surface_distance(self.DGEDT_validation_data, 
+                                                                                    self.opt.L_config_base)
             
             
         ######################
@@ -77,10 +89,17 @@ class ReadData:
         self.train_extended_attention_mask  = self.get_data_loader(examples=self.train_examples, type='train_data',
                                                                    gcls_attention_mask = self.train_gcls_attention_mask, 
                                                                    path_types = self.opt.path_types)
+        
         self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices, \
         self.eval_extended_attention_mask = self.get_data_loader(examples=self.eval_examples, type='eval_data', 
                                                                  gcls_attention_mask = self.eval_gcls_attention_mask,
                                                                  path_types = self.opt.path_types)
+        if opt.task_name == 'mams':
+            self.validation_data, self.validation_dataloader, self.validation_tran_indices, self.validation_span_indices, \
+            self.validation_extended_attention_mask = self.get_data_loader(examples=self.validation_examples, type='validation', 
+                                                                 gcls_attention_mask = self.validation_gcls_attention_mask,
+                                                                 path_types = self.opt.path_types)
+            
                   
     def process_DG(self, DGEDT_train_data, layer_L, path_types = None):
         length_R_trans = {}
@@ -364,9 +383,10 @@ class ReadData:
         elif type == 'eval_data':
             DGEDT_batches = self.DGEDT_test_batches[0]
             DGEDT_data = self.DGEDT_test_data    # 점검용
+        elif type == 'validation':
+            DGEDT_batches = self.DGEDT_validation_batches[0]
+            DGEDT_data = self.DGEDT_validation_data 
         
-        print(type)
-        print('='*77)
         batch_size_ = DGEDT_batches['text_indices'].size(0)
         
         all_input_ids_org = torch.tensor([f.input_ids for f in features], dtype=torch.long)
@@ -1036,12 +1056,12 @@ class MamsProcessor(DataProcessor):
     def get_dev_examples(self, data_dir):
         """See base class."""
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "validation.raw")), "dev")
+            self._read_tsv(os.path.join(data_dir, "test.raw")), "dev")
     
-    def get_test_examples(self, data_dir):
+    def get_validation_examples(self, data_dir):
         """See base class."""
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "test.raw")), "dev")
+            self._read_tsv(os.path.join(data_dir, "validation.raw")), "test")
 
     def get_labels(self):
         """See base class."""
