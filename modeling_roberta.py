@@ -1021,9 +1021,9 @@ class RobertaPooler_gcls_avg(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
-    def forward(self, hidden_states: torch.Tensor, g_token_pos) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         first_token_tensor = hidden_states[:,0]
-        gcls_token_tensor = hidden_states[:,g_token_pos]
+        gcls_token_tensor = hidden_states[:,1]
         cat = (first_token_tensor + gcls_token_tensor)/2.0
         
         pooled_output = self.dense(cat)
@@ -1056,7 +1056,7 @@ class RobertaPooler_gcls_max(nn.Module):
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
-    def forward(self, hidden_states: torch.Tensor, g_token_pos) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         first_second_token_tensor = hidden_states[:, :2]
         cat = torch.max(first_second_token_tensor, dim=1)[0]
         
@@ -1983,13 +1983,9 @@ class RobertaModel_gcls_avg(RobertaPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            layer_L = layer_L,
-            g_config = g_config,
-            g_token_pos = g_token_pos,
-            target_idx = target_idx,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, g_token_pos) if self.pooler is not None else None
+        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -2190,13 +2186,9 @@ class RobertaModel_gcls_max(RobertaPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            layer_L = layer_L,
-            g_config = g_config,
-            g_token_pos = g_token_pos,
-            target_idx = target_idx,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, g_token_pos) if self.pooler is not None else None
+        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
