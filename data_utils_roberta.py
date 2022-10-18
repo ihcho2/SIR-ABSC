@@ -265,6 +265,11 @@ class ABSADatesetReader:
                 'train': './datasets/semeval14/laptops/laptop_train.raw',
                 'test': './datasets/semeval14/laptops/laptop_test.raw'
             },
+            'mams': {
+                'train': './datasets/MAMS-ATSA/train.raw',
+                'validation' : './datasets/MAMS-ATSA/validation.raw',
+                'test': './datasets/MAMS-ATSA/test.raw'
+            },
             'rest15': {
                 'train': './datasets/semeval15/restaurant_train.raw',
                 'test': './datasets/semeval15/restaurant_test.raw'
@@ -298,7 +303,7 @@ class ABSADatesetReader:
         index_vocab = collections.OrderedDict()
         index = 0
     
-        with open('/home/ikhyuncho23/ABSC/roberta_files/vocab.json', 'r') as f:
+        with open('/home/ikhyuncho23/GoBERTa/roberta_files/vocab.json', 'r') as f:
             data = json.load(f)
         
         for item in data:
@@ -310,21 +315,26 @@ class ABSADatesetReader:
         if change:
             self.train_data = ABSADataset(ABSADatesetReader.__read_datas__(fname[dataset]['train'], self.tokenizer,fname[dataset]['test']))
         else:
+            if dataset == 'mams':
+                print('='*77)
+                print('mams')
+                self.validation_data = ABSADataset(ABSADatesetReader.__read_data__(fname[dataset]['validation'], self.tokenizer,fname[dataset]['train']))
             self.train_data = ABSADataset(ABSADatesetReader.__read_data__(fname[dataset]['train'], self.tokenizer,fname[dataset]['train']))
             self.test_data = ABSADataset(ABSADatesetReader.__read_data__(fname[dataset]['test'], self.tokenizer,fname[dataset]['train']))
-if __name__ == '__main__':
-    tmp=ABSADatesetReader(dataset='twitter')
-    dataset='twitter'
-    with open(dataset+'_datas_roberta.pkl', 'wb') as f:
-                     pickle.dump(tmp, f)
-
-    tmp=ABSADatesetReader(dataset='rest14')
-    dataset='rest14'
-    with open(dataset+'_datas_roberta.pkl', 'wb') as f:
-                     pickle.dump(tmp, f)
             
-    tmp=ABSADatesetReader(dataset='lap14')
-    dataset='lap14'
+if __name__ == '__main__':
+#     tmp=ABSADatesetReader(dataset='twitter')
+#     dataset='twitter'
+#     with open(dataset+'_datas_roberta.pkl', 'wb') as f:
+#                      pickle.dump(tmp, f)
+
+#     tmp=ABSADatesetReader(dataset='rest14')
+#     dataset='rest14'
+#     with open(dataset+'_datas_roberta.pkl', 'wb') as f:
+#                      pickle.dump(tmp, f)
+            
+    tmp=ABSADatesetReader(dataset='mams')
+    dataset='mams'
     with open(dataset+'_datas_roberta.pkl', 'wb') as f:
                      pickle.dump(tmp, f)
 
