@@ -146,6 +146,7 @@ if __name__ == '__main__':
     
     edge_vocab=process('./datasets/MAMS-ATSA/train.raw',None,True)
     process('./datasets/MAMS-ATSA/test.raw',edge_vocab,False)
+    process('./datasets/MAMS-ATSA/valiation.raw',edge_vocab,False)
     
 #     edge_vocab=process('./datasets/semeval15/restaurant_train.raw',None,True)
 #     process('./datasets/semeval15/restaurant_test.raw',edge_vocab,False)
