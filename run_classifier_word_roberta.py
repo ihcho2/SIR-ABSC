@@ -22,7 +22,7 @@ from optimization import BERTAdam
 
 from configs import get_config
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
-from utils.data_util_roberta import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
+from utils.data_util_roberta import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor, MamsProcessor
 from utils.save_and_load import load_model_MoE, load_model_roberta_rpt
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
@@ -103,13 +103,17 @@ class Instructor:
         self.train_span_indices = self.dataset.train_span_indices
         self.eval_tran_indices = self.dataset.eval_tran_indices
         self.eval_span_indices = self.dataset.eval_span_indices
+        if task_name == 'mams':
+            self.validation_tran_indices = self.dataset.validation_tran_indices
+            self.validation_span_indices = self.dataset.validation_span_indices
         
         if args.model_name in ['gcls', 'scls','roberta_gcls','roberta_td', 'roberta_lcf_td', 'roberta_gcls_td',
                                'roberta_asc_td']:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
-            
-            
+            if task_name == 'mams':
+                self.validation_extended_attention_mask = self.dataset.validation_extended_attention_mask.to(args.device)
+                
         if args.model_name in ['roberta_lcf', 'roberta_lcf_td']:
             self.train_lcf_vec_list = self.dataset.train_lcf_vec_list
             self.eval_lcf_vec_list = self.dataset.eval_lcf_vec_list
@@ -279,8 +283,14 @@ class Instructor:
         self.max_test_acc_INC = 0
         self.max_test_acc_rand = 0
         
+        self.max_validation_acc_INC = 0
+        self.max_validation_acc_rand = 0
+        
         self.max_test_f1_INC = 0
         self.max_test_f1_rand = 0
+        
+        self.max_validation_f1_INC = 0
+        self.max_validation_f1_rand = 0
         
         self.best_L_config_acc = []
         
@@ -330,6 +340,8 @@ class Instructor:
                 
         print('# of train_examples: ', len(self.dataset.train_examples))
         print('# of eval_examples: ', len(self.dataset.eval_examples))
+        if task_name == 'mams':
+            print('# of validation_examples: ', len(self.dataset.validation_examples))
         
         train_layer_L = self.opt.L_config_base
         train_layer_L_set = set(train_layer_L)
@@ -374,14 +386,12 @@ class Instructor:
                                                     dtype = torch.float)
                     train_lcf_matrix = train_lcf_matrix.to(self.opt.device)
                 
-                if self.global_step % 5000000 == 499999:
+                if self.global_step % 50 == 0:
                     if self.opt.model_name in ['gcls', 'gcls_moe', 'roberta_gcls',
                                               'roberta_td']:
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
                         print('guid: ', all_input_guids[0])
-                        print('graph_s_pos[0]: ', graph_s_pos[0])
-                        print('graph_s tokens are: ', tokenizer.convert_ids_to_tokens(input_ids[0][graph_s_pos[0]==1]))
                         print('gcls_attention_mask[0][:5]: ', train_gcls_attention_mask[0][:5])
                         
                         
@@ -422,6 +432,7 @@ class Instructor:
                         print('-'*77)
                         print('input_ids[0][:50]: ')
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
+                        print('label_ids[0]: ', label_ids[0])
                         
                     elif self.opt.model_name in ['roberta_gcls_td']:
                         print('-'*77)
@@ -564,7 +575,15 @@ class Instructor:
                     print('lr: ', self.optimizer.param_groups[0]['lr'])
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
-                    result = self.do_eval()
+                    if task_name == 'mams':
+                        result, validation_increased = self.do_eval('validation')
+                        if validation_increased:
+                            print('='*77)
+                            print('Validation increased... testing on the test set')
+                            print('='*77)
+                            test_result = self.do_eval()
+                    else:
+                        result = self.do_eval()
                     tr_loss = tr_loss / nb_tr_steps
                     # self.scheduler.step(result['eval_accuracy'])
 #                     self.writer.add_scalar('train_loss', tr_loss, i_epoch)
@@ -574,9 +593,14 @@ class Instructor:
 #                     self.writer.add_scalar('lr', self.optimizer_me.param_groups[0]['lr'], i_epoch)
                     
                     if self.opt.random_eval == False:
-                        print(
-                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
-                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC))
+                        if task_name == 'mams':
+                            print(
+                            "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f}".format(
+                                train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC))
+                        else:
+                            print(
+                            "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
+                                train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC))
                     else:
                         print(
                             "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f}".format(
@@ -589,7 +613,7 @@ class Instructor:
                         print(f" | best_L_config_acc: {self.best_L_config_acc} |")
                         print(f" | best_L_config_f1: {self.best_L_config_f1} |")
                         
-    def do_eval(self):  
+    def do_eval(self, data_type = None):  
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
@@ -600,7 +624,11 @@ class Instructor:
         layer_L = self.opt.L_config_base
         layer_L_set = set(layer_L)
         
-        for batch in tqdm(self.dataset.eval_dataloader, desc="Evaluating"):
+        if data_type == 'validation':
+            d_loader = self.dataset.validation_dataloader
+        else:
+            d_loader = self.dataset.eval_dataloader
+        for batch in tqdm(d_loader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
             input_ids, label_ids, all_input_guids = batch
                 
@@ -614,7 +642,10 @@ class Instructor:
                 input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
             elif self.opt.model_name in ['roberta_gcls']:
                 input_ids = input_ids.to(self.opt.device)
-                eval_extended_attention_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
+                if data_type == 'validation':
+                    extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
+                else:
+                    extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
             elif self.opt.model_name in ['roberta']:
                 input_ids = input_ids.to(self.opt.device)
             else:
@@ -636,7 +667,7 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = eval_extended_attention_mask)[:2]
+                                              extended_attention_mask = extended_att_mask)[:2]
                   
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_2]:
                     loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask=gcls_attention_mask,
@@ -751,21 +782,40 @@ class Instructor:
         
         eval_accuracy = eval_accuracy / nb_eval_examples
         
-        if eval_accuracy > self.max_test_acc_INC:
-            self.max_test_acc_INC = eval_accuracy
-            if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
-                torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
-                print('='*77)
-                print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
-                print('='*77)
-        if test_f1 > self.max_test_f1_INC:
-            self.max_test_f1_INC = test_f1
-            if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
-                torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
-                print('='*77)
-                print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
-                print('='*77)
-                
+        if data_type == 'validation':
+            validation_increased = False
+            if eval_accuracy > self.max_validation_acc_INC:
+                self.max_validation_acc_INC = eval_accuracy
+                validation_increased = True
+                if self.max_validation_acc_INC > 0.797 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
+                    print('='*77)
+            if test_f1 > self.max_validation_f1_INC:
+                self.max_validation_f1_INC = test_f1
+                validation_increased = True
+                if self.max_validation_f1_INC > 0.758 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
+                    print('='*77)
+        else:
+            if eval_accuracy > self.max_test_acc_INC:
+                self.max_test_acc_INC = eval_accuracy
+                if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
+                    print('='*77)
+            if test_f1 > self.max_test_f1_INC:
+                self.max_test_f1_INC = test_f1
+                if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
+                    print('='*77)
+
         if self.opt.random_eval == False:
             result = {'eval_loss': eval_loss,
                       'eval_accuracy': eval_accuracy,
@@ -779,7 +829,10 @@ class Instructor:
                 result['eval_accuracy_'+str(i+1)] = eval_accuracy_rand[i]
                 result['eval_f1_'+str(i+1)] = eval_accuracy_rand[i]
             
-        return result
+        if data_type == 'validation':
+            return result, validation_increased
+        else:
+            return result
 
 
     def do_predict(self):
@@ -836,6 +889,7 @@ if __name__ == "__main__":
         "restaurant": RestaurantProcessor,
         "laptop": LaptopProcessor,
         "tweet": TweetProcessor,
+        "mams": MamsProcessor,
     }
     task_name = args.task_name.lower()
     if task_name not in processors:
