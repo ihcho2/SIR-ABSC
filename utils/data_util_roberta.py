@@ -375,8 +375,7 @@ class ReadData:
         
         ##############################
         
-        all_graph_s_pos = DGEDT_batches['graph_s_pos']
-        
+#         all_graph_s_pos = DGEDT_batches['graph_s_pos']
         
         all_input_mask_org = torch.tensor([f.input_mask for f in features], dtype=torch.long)
         ##############################
@@ -607,9 +606,9 @@ class ReadData:
 #                         extended_attention_mask[i, j, (int(12/min(2**item, path_types)))*t:int((12/min(2**item, path_types)))*(t+1), 1, :] =  (1 - gcls_attention_mask[i][item][t]) * -10000.0
 
                 extended_attention_mask[i, j, :, 0, 0] = (1-g_config[j][0][0]) * -10000.0
-                extended_attention_mask[i, j, :, 0, self.opt.gcls_pos] = (1-g_config[j][0][1]) * -10000.0
-                extended_attention_mask[i, j, :, self.opt.gcls_pos, 0] = (1-g_config[j][1][0]) * -10000.0
-                extended_attention_mask[i, j, :, self.opt.gcls_pos, self.opt.gcls_pos] = (1-g_config[j][1][1]) * -10000.0
+                extended_attention_mask[i, j, :, 0, self.opt.g_token_pos] = (1-g_config[j][0][1]) * -10000.0
+                extended_attention_mask[i, j, :, self.opt.g_token_pos, 0] = (1-g_config[j][1][0]) * -10000.0
+                extended_attention_mask[i, j, :, self.opt.g_token_pos, self.opt.g_token_pos] = (1-g_config[j][1][1]) * -10000.0
                 
                 
         ###############################
