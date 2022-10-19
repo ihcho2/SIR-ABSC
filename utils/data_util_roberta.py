@@ -394,42 +394,42 @@ class ReadData:
         assert all_input_ids_org.size(0) == batch_size_
         ##############################
         all_input_ids = DGEDT_batches['text_indices']
-        all_input_ids_lcf_global = DGEDT_batches['text_indices_lcf_global']
-        all_input_ids_lcf_local = DGEDT_batches['text_indices_lcf_local']
+#         all_input_ids_lcf_global = DGEDT_batches['text_indices_lcf_global']
+#         all_input_ids_lcf_local = DGEDT_batches['text_indices_lcf_local']
         
         
         ##############################
         
 #         all_graph_s_pos = DGEDT_batches['graph_s_pos']
         
-        all_input_mask_org = torch.tensor([f.input_mask for f in features], dtype=torch.long)
-        ##############################
-        text_len = torch.sum(DGEDT_batches['text_indices'] != 1, dim=-1)
-        text_len_lcf_global = torch.sum(DGEDT_batches['text_indices_lcf_global'] != 1, dim=-1)
-        text_len_lcf_local = torch.sum(DGEDT_batches['text_indices_lcf_local'] != 1, dim=-1)
+#         all_input_mask_org = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+#         ##############################
+#         text_len = torch.sum(DGEDT_batches['text_indices'] != 1, dim=-1)
+#         text_len_lcf_global = torch.sum(DGEDT_batches['text_indices_lcf_global'] != 1, dim=-1)
+#         text_len_lcf_local = torch.sum(DGEDT_batches['text_indices_lcf_local'] != 1, dim=-1)
         
         
-        all_input_mask = length2mask(text_len, DGEDT_batches['text_indices'].size(1))
-        all_input_mask_lcf_global = length2mask(text_len, DGEDT_batches['text_indices_lcf_global'].size(1))
-        all_input_mask_lcf_local = length2mask(text_len, DGEDT_batches['text_indices_lcf_local'].size(1))
+#         all_input_mask = length2mask(text_len, DGEDT_batches['text_indices'].size(1))
+#         all_input_mask_lcf_global = length2mask(text_len, DGEDT_batches['text_indices_lcf_global'].size(1))
+#         all_input_mask_lcf_local = length2mask(text_len, DGEDT_batches['text_indices_lcf_local'].size(1))
         
-        all_segment_ids_org = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
-        ##############################
-        all_segment_ids = all_segment_ids_org  # all zeroes of size 128.
-        all_segment_ids_lcf_global = all_segment_ids_org
-        all_segment_ids_lcf_local = all_segment_ids_org
+#         all_segment_ids_org = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+#         ##############################
+#         all_segment_ids = all_segment_ids_org  # all zeroes of size 128.
+#         all_segment_ids_lcf_global = all_segment_ids_org
+#         all_segment_ids_lcf_local = all_segment_ids_org
         
         ########## When target is appended at the end or the beginning.
-        for i in range(batch_size_):
-            x = (all_input_ids[i] == 2).nonzero(as_tuple=True)[0]
-            all_segment_ids[i][x[0]+1:x[-1]+1] = 1
+#         for i in range(batch_size_):
+#             x = (all_input_ids[i] == 2).nonzero(as_tuple=True)[0]
+#             all_segment_ids[i][x[0]+1:x[-1]+1] = 1
             
-            x = (all_input_ids_lcf_global[i] == 2).nonzero(as_tuple=True)[0]
-            all_segment_ids_lcf_global[i][x[0]+1:x[-1]+1] = 1
+#             x = (all_input_ids_lcf_global[i] == 2).nonzero(as_tuple=True)[0]
+#             all_segment_ids_lcf_global[i][x[0]+1:x[-1]+1] = 1
             
-            x = (all_input_ids_lcf_local[i] == 2).nonzero(as_tuple=True)[0]
-            all_segment_ids_lcf_global[i][x[0]+1:x[-1]+1] = 1
-            # lcf_local -> 전부 0.
+#             x = (all_input_ids_lcf_local[i] == 2).nonzero(as_tuple=True)[0]
+#             all_segment_ids_lcf_global[i][x[0]+1:x[-1]+1] = 1
+#             # lcf_local -> 전부 0.
             
         ##########
     
@@ -444,104 +444,104 @@ class ReadData:
         
         
                 
-        all_input_t_ids_org = torch.tensor([f.input_t_ids for f in features], dtype=torch.long)
-        ##############################
-        all_input_t_ids = DGEDT_batches['aspect_indices']
-        ##############################
+#         all_input_t_ids_org = torch.tensor([f.input_t_ids for f in features], dtype=torch.long)
+#         ##############################
+#         all_input_t_ids = DGEDT_batches['aspect_indices']
+#         ##############################
         
         
         
-        all_input_t_mask_org = torch.tensor([f.input_t_mask for f in features], dtype=torch.long)
-        ##############################
-        all_input_t_mask = torch.tensor(all_input_t_ids>0, dtype = torch.long)
-        # Not used anyway
-        ##############################
+#         all_input_t_mask_org = torch.tensor([f.input_t_mask for f in features], dtype=torch.long)
+#         ##############################
+#         all_input_t_mask = torch.tensor(all_input_t_ids>0, dtype = torch.long)
+#         # Not used anyway
+#         ##############################
 
         
         
-        all_segment_t_ids_org = torch.tensor([f.segment_t_ids for f in features], dtype=torch.long)
-        ##############################
-        all_segment_t_ids = torch.zeros(all_input_t_ids.size(), dtype = torch.long)
-        # No change. Zeros with size 128. Also not used anyway.
-        ##############################
+#         all_segment_t_ids_org = torch.tensor([f.segment_t_ids for f in features], dtype=torch.long)
+#         ##############################
+#         all_segment_t_ids = torch.zeros(all_input_t_ids.size(), dtype = torch.long)
+#         # No change. Zeros with size 128. Also not used anyway.
+#         ##############################
 
         
         
-        all_input_without_t_ids_org = torch.tensor([f.input_without_t_ids for f in features], dtype=torch.long)
-        ##############################
-        # not used in TD-BERT.
-        all_input_without_t_ids = torch.zeros(all_input_without_t_ids_org.size(), dtype = torch.long)
-        ##############################
+#         all_input_without_t_ids_org = torch.tensor([f.input_without_t_ids for f in features], dtype=torch.long)
+#         ##############################
+#         # not used in TD-BERT.
+#         all_input_without_t_ids = torch.zeros(all_input_without_t_ids_org.size(), dtype = torch.long)
+#         ##############################
         
         
         
-        all_input_without_t_mask_org = torch.tensor([f.input_without_t_mask for f in features], dtype=torch.long)
-        ##############################
-        # not used in TD-BERT.
-        all_input_without_t_mask = torch.zeros(all_input_without_t_mask_org.size(), dtype = torch.long)
-        ##############################
+#         all_input_without_t_mask_org = torch.tensor([f.input_without_t_mask for f in features], dtype=torch.long)
+#         ##############################
+#         # not used in TD-BERT.
+#         all_input_without_t_mask = torch.zeros(all_input_without_t_mask_org.size(), dtype = torch.long)
+#         ##############################
         
         
         
-        all_segment_without_t_ids_org = torch.tensor([f.segment_without_t_ids for f in features], dtype=torch.long)
-        ##############################
-        # not used in TD-BERT.
-        all_segment_without_t_ids = torch.zeros(all_segment_without_t_ids_org.size(), dtype = torch.long)
-        ##############################
+#         all_segment_without_t_ids_org = torch.tensor([f.segment_without_t_ids for f in features], dtype=torch.long)
+#         ##############################
+#         # not used in TD-BERT.
+#         all_segment_without_t_ids = torch.zeros(all_segment_without_t_ids_org.size(), dtype = torch.long)
+#         ##############################
         
         
         
-        all_input_left_t_ids = torch.tensor([f.input_left_t_ids for f in features], dtype=torch.long)
-        all_input_left_t_mask = torch.tensor([f.input_left_t_mask for f in features], dtype=torch.long)
-        all_segment_left_t_ids = torch.tensor([f.segment_left_t_ids for f in features], dtype=torch.long)
-        all_input_right_t_ids = torch.tensor([f.input_right_t_ids for f in features], dtype=torch.long)
-        all_input_right_t_mask = torch.tensor([f.input_right_t_mask for f in features], dtype=torch.long)
-        all_segment_right_t_ids = torch.tensor([f.segment_right_t_ids for f in features], dtype=torch.long)
-        ##############################
-        # Above six are all not used in TD-BERT.
-        ##############################
+#         all_input_left_t_ids = torch.tensor([f.input_left_t_ids for f in features], dtype=torch.long)
+#         all_input_left_t_mask = torch.tensor([f.input_left_t_mask for f in features], dtype=torch.long)
+#         all_segment_left_t_ids = torch.tensor([f.segment_left_t_ids for f in features], dtype=torch.long)
+#         all_input_right_t_ids = torch.tensor([f.input_right_t_ids for f in features], dtype=torch.long)
+#         all_input_right_t_mask = torch.tensor([f.input_right_t_mask for f in features], dtype=torch.long)
+#         all_segment_right_t_ids = torch.tensor([f.segment_right_t_ids for f in features], dtype=torch.long)
+#         ##############################
+#         # Above six are all not used in TD-BERT.
+#         ##############################
 
-        input_left_ids_org = torch.tensor([f.input_left_ids for f in features], dtype=torch.long)
-        ##############################
-        input_left_ids = torch.zeros(input_left_ids_org.size(), dtype = torch.long)
-        for i in range(batch_size_):
-            aspect_start_idx = DGEDT_batches['tran_indices'][i][DGEDT_batches['span_indices'][i][0][0]][0] + 1
-            input_left_ids[i][:aspect_start_idx] = DGEDT_batches['text_indices'][i][:aspect_start_idx]
-            input_left_ids[i][aspect_start_idx] = 2    # [SEP]
+#         input_left_ids_org = torch.tensor([f.input_left_ids for f in features], dtype=torch.long)
+#         ##############################
+#         input_left_ids = torch.zeros(input_left_ids_org.size(), dtype = torch.long)
+#         for i in range(batch_size_):
+#             aspect_start_idx = DGEDT_batches['tran_indices'][i][DGEDT_batches['span_indices'][i][0][0]][0] + 1
+#             input_left_ids[i][:aspect_start_idx] = DGEDT_batches['text_indices'][i][:aspect_start_idx]
+#             input_left_ids[i][aspect_start_idx] = 2    # [SEP]
             
-        ##############################
+#         ##############################
         
         
         
-        input_left_mask_org = torch.tensor([f.input_left_mask for f in features], dtype=torch.long)
-        ##############################
-        input_left_mask = torch.tensor(input_left_ids>0, dtype = torch.long)
-        # 어차피 안 쓰임.
-        ##############################
+#         input_left_mask_org = torch.tensor([f.input_left_mask for f in features], dtype=torch.long)
+#         ##############################
+#         input_left_mask = torch.tensor(input_left_ids>0, dtype = torch.long)
+#         # 어차피 안 쓰임.
+#         ##############################
         
         
         
-        segment_left_ids_org = torch.tensor([f.segment_left_ids for f in features], dtype=torch.long)
-        ##############################
-        segment_left_ids = torch.zeros(input_left_ids.size(), dtype = torch.long)
-        # 어차피 안 쓰임.
-        ##############################
+#         segment_left_ids_org = torch.tensor([f.segment_left_ids for f in features], dtype=torch.long)
+#         ##############################
+#         segment_left_ids = torch.zeros(input_left_ids.size(), dtype = torch.long)
+#         # 어차피 안 쓰임.
+#         ##############################
         
         all_tran_indices = DGEDT_batches['tran_indices']
         all_span_indices = DGEDT_batches['span_indices']
         all_input_guids = torch.tensor([i for i in range(batch_size_)], dtype = torch.long)
-        all_input_dg = DGEDT_batches['dependency_graph']
-        all_input_dg1 = DGEDT_batches['dependency_graph1']
-        all_input_dg2 = DGEDT_batches['dependency_graph2']
-        all_input_dg3 = DGEDT_batches['dependency_graph3']
+#         all_input_dg = DGEDT_batches['dependency_graph']
+#         all_input_dg1 = DGEDT_batches['dependency_graph1']
+#         all_input_dg2 = DGEDT_batches['dependency_graph2']
+#         all_input_dg3 = DGEDT_batches['dependency_graph3']
         
-        ###### Making LCF matrices
-        lcf_vec_list = []
-        for j in range(batch_size_):
-            aspect_start_idx = DGEDT_batches['tran_indices'][j][DGEDT_batches['span_indices'][j][0][0]][0] + 1
-            lcf_vec_list.append(self.get_cdw_vec(local_indices=all_input_ids_lcf_local[j], 
-                                                 aspect_indices=all_input_t_ids[j], aspect_begin=aspect_start_idx,
-                                                 syntactical_dist=None))
+#         ###### Making LCF matrices
+#         lcf_vec_list = []
+#         for j in range(batch_size_):
+#             aspect_start_idx = DGEDT_batches['tran_indices'][j][DGEDT_batches['span_indices'][j][0][0]][0] + 1
+#             lcf_vec_list.append(self.get_cdw_vec(local_indices=all_input_ids_lcf_local[j], 
+#                                                  aspect_indices=all_input_t_ids[j], aspect_begin=aspect_start_idx,
+#                                                  syntactical_dist=None))
 
 #         lcf_vec = torch.tensor(lcf_vec_list, dtype=torch.long)
 
@@ -631,9 +631,9 @@ class ReadData:
 #                         extended_attention_mask[i, j, (int(12/min(2**item, path_types)))*t:int((12/min(2**item, path_types)))*(t+1), 1, :] =  (1 - gcls_attention_mask[i][item][t]) * -10000.0
 
                 extended_attention_mask[i, j, :, 0, 0] = (1-g_config[j][0][0]) * -10000.0
-                extended_attention_mask[i, j, :, 0, self.opt.g_token_pos] = (1-g_config[j][0][1]) * -10000.0
-                extended_attention_mask[i, j, :, self.opt.g_token_pos, 0] = (1-g_config[j][1][0]) * -10000.0
-                extended_attention_mask[i, j, :, self.opt.g_token_pos, self.opt.g_token_pos] = (1-g_config[j][1][1]) * -10000.0
+                extended_attention_mask[i, j, :, 0, 1] = (1-g_config[j][0][1]) * -10000.0
+                extended_attention_mask[i, j, :, 1, 0] = (1-g_config[j][1][0]) * -10000.0
+                extended_attention_mask[i, j, :, 1, 1] = (1-g_config[j][1][1]) * -10000.0
                 
                 
         ###############################
