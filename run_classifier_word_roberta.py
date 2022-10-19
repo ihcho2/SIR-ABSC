@@ -296,7 +296,14 @@ class Instructor:
         
         self.best_L_config_f1 = []
         
-
+        self.last_test_acc = 0
+        self.last_test_f1 = 0
+        self.last_test_epoch = 0
+        
+        self.test_acc_each_epoch = []
+        self.test_f1_each_epoch = []
+        
+        
         
     ###############################################################################################
     ###############################################################################################
@@ -355,6 +362,11 @@ class Instructor:
             nb_tr_examples, nb_tr_steps = 0, 0
             y_pred = []
             y_true = []
+            
+            if i_epoch > 0:
+                self.test_acc_each_epoch.append(self.last_test_acc)
+                self.test_f1_each_epoch.append(self.last_test_f1)
+                
             for step, batch in enumerate(tqdm(self.dataset.train_dataloader, desc="Training")):
                 # batch = tuple(t.to(self.opt.device) for t in batch)
                 self.model.train()
@@ -582,6 +594,12 @@ class Instructor:
                             print('Validation increased... testing on the test set')
                             print('='*77)
                             test_result = self.do_eval()
+                            print('-'*77)
+                            print(f"Test results => Acc: {test_result['eval_accuracy']}, f1: {test_result['eval_f1']}")
+                            print('-'*77)
+                            self.last_test_acc = test_result['eval_accuracy']
+                            self.last_test_f1 = test_result['eval_f1']
+                            self.last_test_epoch = i_epoch
                     else:
                         result = self.do_eval()
                     tr_loss = tr_loss / nb_tr_steps
@@ -595,8 +613,8 @@ class Instructor:
                     if self.opt.random_eval == False:
                         if task_name == 'mams':
                             print(
-                            "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f}".format(
-                                train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC))
+                            "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f} | last_test_acc: {10:.6f} | last_test_f1: {11:.6f} | last_test_epoch: {12:.6f} ".format(
+                                train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC, self.last_test_acc, self.last_test_f1, self.last_test_epoch))
                         else:
                             print(
                             "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
@@ -875,8 +893,19 @@ class Instructor:
         if self.opt.do_predict:
             test_accuracy = self.do_predict()
             print("Test Set Accuracy: {:.4f}".format(test_accuracy))
-        print("Max validate Set Acc_INC: {:.4f}, F1: {:.4f}".format(self.max_test_acc_INC, self.max_test_f1_INC))
-        print("Max validate Set Acc_rand: {:.4f}, F1: {:.4f}".format(self.max_test_acc_rand, self.max_test_f1_rand))  
+        if task_name == 'mams':
+            print("Max validation set acc: {:.4f}, F1: {:.4f}".format(self.max_validation_acc_INC, self.max_validation_f1_INC))
+            print("Max test set acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc_INC, self.max_test_f1_INC))
+            print("Last test set acc: {:.4f}, F1: {:.4f}, epoch: {:.4f}".format(self.last_test_acc, self.last_test_f1, 
+                                                                                self.last_test_epoch))
+            print('In detail -----------------------------------------------')
+            for i in range(len(self.test_acc_each_epoch)):
+                print(f"Early stop after {i+1} epoch : [Acc: {self.test_acc_each_epoch[i]} / F1: {self.test_f1_each_epoch[i]}")
+                
+        else:
+            print("Max validate set acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc_INC, self.max_test_f1_INC))
+#             print("Max validate set acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc_rand, self.max_test_f1_rand))
+            
 #         self.writer.close()
 #         return self.max_test_acc
         return self.max_test_acc_INC, self.max_test_f1_INC
