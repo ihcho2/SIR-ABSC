@@ -138,6 +138,18 @@ class Instructor:
                 self.model = RobertaForSequenceClassification_gcls_avg.from_pretrained('roberta-base')
             elif args.g_pooler == 'max':
                 self.model = RobertaForSequenceClassification_gcls_max.from_pretrained('roberta-base')
+                
+            print('-'*77)
+            print('sssss')
+            print(self.model.roberta.embeddings.word_embeddings.weight.size())
+            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight[0]))
+            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[0]))
+            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[23976]))
+            
+            self.model.roberta.embeddings.word_embeddings.weight.data[23976] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
+            
+            
+            
             
         elif args.model_class == RobertaForSequenceClassification_gcls_2:
             self.model = RobertaForSequenceClassification_gcls_2.from_pretrained('roberta-base')
@@ -369,6 +381,12 @@ class Instructor:
                 
             for step, batch in enumerate(tqdm(self.dataset.train_dataloader, desc="Training")):
                 # batch = tuple(t.to(self.opt.device) for t in batch)
+                
+                if step % 100 == 0:
+                    print('='*77)
+                    print('compare word embeddings')
+                    print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[0]))
+                    print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[23976]))
                 self.model.train()
                 self.optimizer.zero_grad()
                 if self.optimizer_gcn != None:
@@ -398,13 +416,21 @@ class Instructor:
                                                     dtype = torch.float)
                     train_lcf_matrix = train_lcf_matrix.to(self.opt.device)
                 
-                if self.global_step % 50 == 0:
+                if self.global_step % 100 == 0:
                     if self.opt.model_name in ['gcls', 'gcls_moe', 'roberta_gcls',
                                               'roberta_td']:
                         print('-'*77)
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
                         print('guid: ', all_input_guids[0])
-                        print('train_extended_attention_mask[0][:5]: ', train_extended_attention_mask[0][0][0][1])
+                        print('train_extended_attention_mask layer 1')
+                        x = (train_extended_attention_mask[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        print('train_extended_attention_mask layer 5')
+                        x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        print('train_extended_attention_mask layer 9')
+                        x = (train_extended_attention_mask[8][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
                         
                     elif self.opt.model_name in ['roberta_gcls_2']:
