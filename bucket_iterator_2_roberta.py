@@ -106,7 +106,18 @@ class BucketIterator_2(object):
 
             ############# RoBerta-gcls
             text_indices_copy = text_indices.copy()
-            text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+        
+            sent = 'target is'
+            for item in aspect:
+                sent += ' '
+                sent += item
+                
+#             text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent))
+            text_indices = [0] + [23976] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent))
+#             text_indices = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent))
+            
+#             text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+#             text_indices = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]    
             text_indices_lcf_global = text_indices_copy # 안 쓰임
             text_indices_lcf_local = text_indices_copy # 안 쓰임
             
