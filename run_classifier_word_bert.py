@@ -17,12 +17,12 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from tensorboardX import SummaryWriter
-from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_MoE
+from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_gcls, BertForSequenceClassification_gcls_MoE
 from optimization import BERTAdam
 
 from configs import get_config
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
-from utils.data_util import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
+from utils.data_util_bert import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
 from utils.save_and_load import load_model_MoE
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
@@ -100,16 +100,12 @@ class Instructor:
         self.eval_tran_indices = self.dataset.eval_tran_indices
         self.eval_span_indices = self.dataset.eval_span_indices
         
-        if args.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
-            self.train_gcls_attention_mask = self.dataset.train_gcls_attention_mask
+        if args.model_name in ['bert_gcls', 'scls', 'gcls_er', 'gcls_moe']:
+            self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
+            self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
+            if task_name == 'mams':
+                self.validation_extended_attention_mask = self.dataset.validation_extended_attention_mask.to(args.device)
             
-            self.eval_gcls_attention_mask = self.dataset.eval_gcls_attention_mask
-            
-        if args.model_name in ['scls']:
-            self.train_scls_input_mask = self.dataset.train_scls_input_mask
-            self.eval_scls_input_mask = self.dataset.eval_scls_input_mask
-
-        
         print("label size: {}".format(args.output_dim))
 
         # 初始化模型
@@ -119,10 +115,10 @@ class Instructor:
         
         if args.model_class == BertForSequenceClassification:
             self.model = BertForSequenceClassification(bert_config, len(self.dataset.label_list))
-        elif args.model_class == BertForSequenceClassification_GCLS:
-            self.model = BertForSequenceClassification_GCLS(bert_config, len(self.dataset.label_list))
-        elif args.model_class == BertForSequenceClassification_GCLS_MoE:
-            self.model = BertForSequenceClassification_GCLS_MoE(bert_config, len(self.dataset.label_list))
+        elif args.model_class == BertForSequenceClassification_gcls:
+            self.model = BertForSequenceClassification_gcls(bert_config, len(self.dataset.label_list))
+        elif args.model_class == BertForSequenceClassification_gcls_MoE:
+            self.model = BertForSequenceClassification_gcls_MoE(bert_config, len(self.dataset.label_list))
         else:
             self.model = model_classes[args.model_name](bert_config, args)
         
@@ -144,6 +140,7 @@ class Instructor:
                 print('Loading from ', self.opt.init_checkpoint)
                 print('-'*77)
         
+        self.model.bert.embeddings.word_embeddings.weight.data[30500] = self.model.bert.embeddings.word_embeddings.weight.data[101]
         if args.fp16:
             self.model.half()
             
@@ -180,7 +177,7 @@ class Instructor:
             
             
         no_decay = ['bias', 'gamma', 'beta']
-        if args.model_name in ['td_bert', 'fc', 'gcls', 'scls', 'gcls_er', 'gcls_moe']:
+        if args.model_name in ['td_bert', 'fc', 'bert_gcls', 'scls', 'gcls_er', 'gcls_moe']:
             optimizer_grouped_parameters = [
                 {'params': [p for n, p in self.param_optimizer if n not in no_decay],
                  'weight_decay_rate': 0.01},
@@ -245,7 +242,7 @@ class Instructor:
             self.opt.random_config_training = False
             self.opt.random_eval = False
             
-        elif self.opt.model_name in ['gcls']:
+        elif self.opt.model_name in ['bert_gcls']:
             if self.opt.random_config_training == False:
                 assert len(self.opt.L_config_base) == 12
             
@@ -281,23 +278,26 @@ class Instructor:
             y_true = []
             for step, batch in enumerate(tqdm(self.dataset.train_dataloader, desc="Training")):
                 # batch = tuple(t.to(self.opt.device) for t in batch)
+                
+                if step % 100 == 0:
+                    print('='*77)
+                    print('compare word embeddings')
+                    print(torch.sum(self.model.bert.embeddings.word_embeddings.weight.data[101]))
+                    print(torch.sum(self.model.bert.embeddings.word_embeddings.weight.data[30500]))
+                    
                 self.model.train()
                 self.optimizer.zero_grad()
                 if self.optimizer_gcn != None:
                     self.optimizer_gcn.zero_grad()
                 
-                input_ids, input_mask, segment_ids, label_ids, \
-                input_t_ids, input_t_mask, segment_t_ids, \
-                input_without_t_ids, input_without_t_mask, segment_without_t_ids, \
-                input_left_t_ids, input_left_t_mask, segment_left_t_ids, \
-                input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
-                input_left_ids, input_left_mask, segment_left_ids, \
-                all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids = batch
+                input_ids, input_mask, segment_ids, label_ids, all_input_guids = batch
                                
                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
                 input_mask = input_mask.to(self.opt.device)
                 label_ids = label_ids.to(self.opt.device)
+                
+                train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                 
                 tran_indices = []
                 span_indices = []
@@ -307,19 +307,23 @@ class Instructor:
                 for item in all_input_guids:
                     tran_indices.append(self.train_tran_indices[item])
                     span_indices.append(self.train_span_indices[item])
-                    if self.opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
-                        gcls_attention_mask.append(self.train_gcls_attention_mask[2][item])
-                    if self.opt.model_name in ['scls']:
-                        scls_attention_mask.append(self.train_scls_input_mask[item])
                 
                 if self.global_step % 50 == 0:
                     print('-'*77)
-                    print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
-                    print('segment_ids: ', segment_ids[0][:50])
-                    print('input_mask: ', input_mask[0][:50])
+                    print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
+                    print('-'*77)
+                    print('segment_ids: ')
+                    print(segment_ids[0][:100])
                     print('guid: ', all_input_guids[0])
-                    if self.opt.model_name in ['gcls', 'gcls_moe']:
-                        print('gcls_attention_mask[0][:50]: ', gcls_attention_mask[0][:50])
+                    print('train_extended_attention_mask layer 1')
+                    x = (train_extended_attention_mask[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                    print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                    print('train_extended_attention_mask layer 5')
+                    x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                    print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                    print('train_extended_attention_mask layer 9')
+                    x = (train_extended_attention_mask[8][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                    print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                 
                 
                 ###############################################################################################
@@ -360,10 +364,11 @@ class Instructor:
                 
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              train_layer_L)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS_MoE]:
+                    #####
+                elif self.opt.model_class in [BertForSequenceClassification_gcls]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, train_extended_attention_mask)
+                    #####
+                elif self.opt.model_class in [BertForSequenceClassification_gcls_MoE]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               train_layer_L, MoE_layer)
                 else:
@@ -478,7 +483,7 @@ class Instructor:
                         print(f" | best_L_config_acc: {self.best_L_config_acc} |")
                         print(f" | best_L_config_f1: {self.best_L_config_f1} |")
                         
-    def do_eval(self):  
+    def do_eval(self, data_type = None):  
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
@@ -486,6 +491,11 @@ class Instructor:
         y_pred = []
         y_true = []
         
+        if data_type == 'validation':
+            d_loader = self.dataset.validation_dataloader
+        else:
+            d_loader = self.dataset.eval_dataloader
+            
         if self.opt.random_eval == False:
             layer_L = self.opt.L_config_base
             MoE_layer = [0]*12
@@ -523,20 +533,27 @@ class Instructor:
             
             y_pred_rand = [[] for i in range(self.opt.random_eval_num)]
         
-        for batch in tqdm(self.dataset.eval_dataloader, desc="Evaluating"):
+        for batch in tqdm(d_loader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
-            input_ids, input_mask, segment_ids, label_ids, \
-            input_t_ids, input_t_mask, segment_t_ids, \
-            input_without_t_ids, input_without_t_mask, segment_without_t_ids, \
-            input_left_t_ids, input_left_t_mask, segment_left_t_ids, \
-            input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
-            input_left_ids, input_left_mask, segment_left_ids, \
-            all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids = batch
+            input_ids, input_mask, segment_ids, label_ids, all_input_guids = batch
+            
+#             input_ids, input_mask, segment_ids, label_ids, \
+#             input_t_ids, input_t_mask, segment_t_ids, \
+#             input_without_t_ids, input_without_t_mask, segment_without_t_ids, \
+#             input_left_t_ids, input_left_t_mask, segment_left_t_ids, \
+#             input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
+#             input_left_ids, input_left_mask, segment_left_ids, \
+#             all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids = batch
 
             input_ids = input_ids.to(self.opt.device)
             segment_ids = segment_ids.to(self.opt.device)
             input_mask = input_mask.to(self.opt.device)
             label_ids = label_ids.to(self.opt.device)
+            
+            if data_type == 'validation':
+                extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
+            else:
+                extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
             
             tran_indices = []
             span_indices = []
@@ -545,16 +562,13 @@ class Instructor:
             for item in all_input_guids:
                 tran_indices.append(self.eval_tran_indices[item])
                 span_indices.append(self.eval_span_indices[item])
-                if self.opt.model_name in ['gcls', 'scls', 'gcls_er', 'gcls_moe']:
-                    gcls_attention_mask.append(self.eval_gcls_attention_mask[2][item])
                     
             with torch.no_grad():
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
+                elif self.opt.model_class in [BertForSequenceClassification_gcls]:
                     if self.opt.random_eval == False:
-                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              layer_L)
+                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, extended_att_mask)
                     else:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L)
@@ -566,7 +580,7 @@ class Instructor:
                             loss_rand[i], logits_rand[i] = self.model(input_ids, segment_ids, input_mask, label_ids, 
                                                                       gcls_attention_mask, layer_L_rand[i])
                         
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS_MoE]:
+                elif self.opt.model_class in [BertForSequenceClassification_gcls_MoE]:
                     if self.opt.random_eval == False:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L, MoE_layer)
@@ -690,21 +704,40 @@ class Instructor:
         if self.opt.random_eval == True:
             for i in range(self.opt.random_eval_num):
                 eval_accuracy_rand[i] = eval_accuracy_rand[i] / nb_eval_examples
-        
-        if eval_accuracy > self.max_test_acc_INC:
-            self.max_test_acc_INC = eval_accuracy
-            if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
-                torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
-                print('='*77)
-                print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
-                print('='*77)
-        if test_f1 > self.max_test_f1_INC:
-            self.max_test_f1_INC = test_f1
-            if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
-                torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
-                print('='*77)
-                print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
-                print('='*77)
+                
+        if data_type == 'validation':
+            validation_increased = False
+            if eval_accuracy > self.max_validation_acc_INC:
+                validation_increased = True
+                self.max_validation_acc_INC = eval_accuracy
+                if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
+                    print('='*77)
+            if test_f1 > self.max_validation_f1_INC:
+                validation_increased = True
+                self.max_validation_f1_INC = test_f1
+                if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
+                    print('='*77)
+        else:
+            if eval_accuracy > self.max_test_acc_INC:
+                self.max_test_acc_INC = eval_accuracy
+                if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
+                    print('='*77)
+            if test_f1 > self.max_test_f1_INC:
+                self.max_test_f1_INC = test_f1
+                if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
+                    print('='*77)
+                    print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
+                    print('='*77)
                 
         if self.opt.random_eval == True:
             for i in range(self.opt.random_eval_num):
@@ -737,8 +770,11 @@ class Instructor:
                 result['eval_loss_'+str(i+1)] = eval_loss_rand[i]
                 result['eval_accuracy_'+str(i+1)] = eval_accuracy_rand[i]
                 result['eval_f1_'+str(i+1)] = eval_accuracy_rand[i]
-            
-        return result
+         
+        if data_type == 'validation':
+            return result, validation_increased
+        else:
+            return result
 
 
     def do_predict(self):
@@ -825,8 +861,8 @@ if __name__ == "__main__":
         'aen': AEN_BERT,
         'td_bert': TD_BERT,
         'td_bert_with_gcn': TD_BERT_with_GCN,
-        'gcls': BertForSequenceClassification_GCLS,
-        'gcls_moe': BertForSequenceClassification_GCLS_MoE,
+        'bert_gcls': BertForSequenceClassification_gcls,
+        'bert_gcls_moe': BertForSequenceClassification_gcls_MoE,
         'bert_fc_gcn': BERT_FC_GCN,
         'td_bert_qa': TD_BERT_QA,
         'dtd_bert': DTD_BERT,
