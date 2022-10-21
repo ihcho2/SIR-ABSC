@@ -81,7 +81,8 @@ class BucketIterator_2(object):
             # GCLS
 #             text_indices = [101] + text_indices
 #             text_indices = [101] + text_indices + aspect_indices[1:]
-            text_indices = [101] + text_indices + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+            text_indices = [101] + [30500] + text_indices[1:] + [30500] +\
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is'))[1:] + aspect_indices[1:]
             
             # Bi-GCLS
 #             text_indices = [101] + [101] + text_indices + aspect_indices[1:]
