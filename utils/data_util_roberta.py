@@ -589,23 +589,23 @@ class ReadData:
 
                 if self.opt.graph_type == 'dg':
                     # Uncumul 빠르게 체크.
-                    if item > 0:
-                        # 방법 1. target은 항상 포함하기.
-                        x = gcls_attention_mask[i][item][0] - gcls_attention_mask[i][item-1][0]
-                        assert torch.sum(x<0) == 0 
-                        x = x + gcls_attention_mask[i][0][0]
-                        x[0] = gcls_attention_mask[i][item][0][0]
-                        x[1] = gcls_attention_mask[i][item][0][1]
-                        x[x>=1] = 1
-                        # 방법 2. target도 제외하기.
+#                     if item > 0:
+#                         # 방법 1. target은 항상 포함하기.
+#                         x = gcls_attention_mask[i][item][0] - gcls_attention_mask[i][item-1][0]
+#                         assert torch.sum(x<0) == 0 
+#                         x = x + gcls_attention_mask[i][0][0]
+#                         x[0] = gcls_attention_mask[i][item][0][0]
+#                         x[1] = gcls_attention_mask[i][item][0][1]
+#                         x[x>=1] = 1
+#                         # 방법 2. target도 제외하기.
 #                         x = gcls_attention_mask[i][item][0] - gcls_attention_mask[i][item-1][0]
 #                         assert torch.sum(x<0) == 0
 #                         x[0] = gcls_attention_mask[i][item][0][0]
 #                         x[1] = gcls_attention_mask[i][item][0][1]
 #                         x[x>=1] = 1
-                    else:
-                        x = gcls_attention_mask[i][item][0]
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - x) * -10000.0
+#                     else:
+#                         x = gcls_attention_mask[i][item][0]
+                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
                 elif self.opt.graph_type == 'sd':
                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
 
