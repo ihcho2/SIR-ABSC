@@ -366,7 +366,8 @@ class Instructor:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                     #####
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, train_extended_attention_mask)
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, train_extended_attention_mask,
+                                              pooler_type = args.g_pooler)
                     #####
                 elif self.opt.model_class in [BertForSequenceClassification_gcls_MoE]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
@@ -568,7 +569,8 @@ class Instructor:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
                     if self.opt.random_eval == False:
-                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, extended_att_mask)
+                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, extended_att_mask,
+                                                  pooler_type = args.g_pooler)
                     else:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               layer_L)
