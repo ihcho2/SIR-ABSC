@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from tensorboardX import SummaryWriter
-from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_GCLS, BertForSequenceClassification_GCLS_MoE
+from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_gcls, BertForSequenceClassification_gcls_MoE
 from optimization import BERTAdam
 
 from configs import get_config
@@ -167,8 +167,8 @@ class Instructor:
             self.model.roberta_local = RobertaModel.from_pretrained("roberta-base")
         elif args.model_class == RobertaForSequenceClassification_TD:
             self.model = RobertaForSequenceClassification_TD.from_pretrained('roberta-base')
-        elif args.model_class == BertForSequenceClassification_GCLS:
-            self.model = BertForSequenceClassification_GCLS(bert_config, len(self.dataset.label_list))
+        elif args.model_class == BertForSequenceClassification_gcls:
+            self.model = BertForSequenceClassification_gcls(bert_config, len(self.dataset.label_list))
         else:
             self.model = model_classes[args.model_name](bert_config, args)
         
@@ -425,12 +425,12 @@ class Instructor:
                         print('train_extended_attention_mask layer 1')
                         x = (train_extended_attention_mask[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                        print('train_extended_attention_mask layer 5')
-                        x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                        print('train_extended_attention_mask layer 9')
-                        x = (train_extended_attention_mask[8][0][0][1] == 0).nonzero(as_tuple=True)[0]
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+#                         print('train_extended_attention_mask layer 5')
+#                         x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
+#                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+#                         print('train_extended_attention_mask layer 9')
+#                         x = (train_extended_attention_mask[8][0][0][1] == 0).nonzero(as_tuple=True)[0]
+#                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
                         
                     elif self.opt.model_name in ['roberta_gcls_2']:
@@ -518,10 +518,10 @@ class Instructor:
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
                     loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask = train_gcls_attention_mask)[:2]
                     
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS]:
+                elif self.opt.model_class in [BertForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               train_layer_L)
-                elif self.opt.model_class in [BertForSequenceClassification_GCLS_MoE]:
+                elif self.opt.model_class in [BertForSequenceClassification_gcls_MoE]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               train_layer_L, MoE_layer)
                 else:
@@ -983,8 +983,8 @@ if __name__ == "__main__":
         'aen': AEN_BERT,
         'td_bert': TD_BERT,
         'td_bert_with_gcn': TD_BERT_with_GCN,
-        'gcls': BertForSequenceClassification_GCLS,
-        'gcls_moe': BertForSequenceClassification_GCLS_MoE,
+        'gcls': BertForSequenceClassification_gcls,
+        'gcls_moe': BertForSequenceClassification_gcls_MoE,
         'bert_fc_gcn': BERT_FC_GCN,
         'td_bert_qa': TD_BERT_QA,
         'dtd_bert': DTD_BERT,
