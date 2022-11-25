@@ -29,7 +29,7 @@ from sklearn.metrics import f1_score
 
 import time
 from data_utils import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_gcls_2, RobertaForSequenceClassification_lcf, RobertaModel, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_td, RobertaForSequenceClassification_lcf_td, RobertaForSequenceClassification_asc_td, RobertaForSequenceClassification_gcls_att, RobertaForSequenceClassification_gcls_avg, RobertaForSequenceClassification_gcls_max
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_lcf, RobertaModel, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_td, RobertaForSequenceClassification_gcls_auto, RobertaForSequenceClassification_lcf_td, RobertaForSequenceClassification_asc_td
 
 from torch.distributions.bernoulli import Bernoulli
 
@@ -132,27 +132,20 @@ class Instructor:
             self.model = RobertaForSequenceClassification.from_pretrained('roberta-base')
     
         elif args.model_class == RobertaForSequenceClassification_gcls:
-            if args.g_pooler == 'att':
-                self.model = RobertaForSequenceClassification_gcls_att.from_pretrained('roberta-base')
-            elif args.g_pooler == 'avg':
-                self.model = RobertaForSequenceClassification_gcls_avg.from_pretrained('roberta-base')
-            elif args.g_pooler == 'max':
-                self.model = RobertaForSequenceClassification_gcls_max.from_pretrained('roberta-base')
-                
+            if args.VIC_auto == True:
+                self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base')
+            else:
+                self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base')
+            
             print('-'*77)
-            print('sssss')
             print(self.model.roberta.embeddings.word_embeddings.weight.size())
             print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight[0]))
             print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[0]))
-            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[23976]))
+            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[50249]))
             
-            self.model.roberta.embeddings.word_embeddings.weight.data[23976] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
-            
-            
+            self.model.roberta.embeddings.word_embeddings.weight.data[50249] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
             
             
-        elif args.model_class == RobertaForSequenceClassification_gcls_2:
-            self.model = RobertaForSequenceClassification_gcls_2.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_gcls_td:
             self.model = RobertaForSequenceClassification_gcls_td.from_pretrained('roberta-base')
             self.model.roberta_td = RobertaModel.from_pretrained("roberta-base")
@@ -248,14 +241,29 @@ class Instructor:
             self.optimizer_gcn = None
         
         elif args.model_name in ['roberta', 'roberta_gcls', 'roberta_gcls_2', 'roberta_gcls_td', 'roberta_lcf', 'roberta_lcf_td','roberta_td', 'roberta_asc_td']:
-            optimizer_grouped_parameters = [
-                {'params': [p for n, p in self.param_optimizer if n not in no_decay],
-                 'weight_decay_rate': 0.01},
-                {'params': [p for n, p in self.param_optimizer if n in no_decay],
-                 'weight_decay_rate': 0.0}
-            ]
+            if args.VIC_auto == True:
+                VIC_params = []
+                for n, p in self.param_optimizer:
+                    if 'VIC' in n:
+                        VIC_params.append(n)
+                        
+                print(VIC_params)
+                optimizer_grouped_parameters = [
+                    {'params': [p for n, p in self.param_optimizer if n not in VIC_params],
+                     'weight_decay_rate': 0.01},
+                    {'params': [p for n, p in self.param_optimizer if n in VIC_params],
+                     'weight_decay_rate': 0.01, 'lr': args.VIC_gate_lr},
+                ]
+            else:
+                optimizer_grouped_parameters = [
+                    {'params': [p for n, p in self.param_optimizer if n not in no_decay],
+                     'weight_decay_rate': 0.01},
+                    {'params': [p for n, p in self.param_optimizer if n in no_decay],
+                     'weight_decay_rate': 0.0}
+                ]
+            
             self.optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8)
-            scheduler = LambdaLR(self.optimizer, lr_lambda = lambda epoch: 0.95 ** epoch)
+            self.scheduler = LambdaLR(self.optimizer, lr_lambda = lambda epoch: 0.95 ** epoch)
             
             self.optimizer_gcn = None
         elif args.model_name in ['td_bert_with_gcn', 'bert_fc_gcn']:
@@ -366,6 +374,8 @@ class Instructor:
         train_layer_L_set = set(train_layer_L)
         
         for i_epoch in range(int(args.num_train_epochs)):
+#             if i_epoch>0:
+#                 self.scheduler.step()
             print('>' * 100)
             print('>' * 100)
             print('epoch: ', i_epoch)
@@ -386,7 +396,7 @@ class Instructor:
                     print('='*77)
                     print('compare word embeddings')
                     print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[0]))
-                    print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[23976]))
+                    print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[50249]))
                 self.model.train()
                 self.optimizer.zero_grad()
                 if self.optimizer_gcn != None:
@@ -489,13 +499,8 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask)[:2]
-                
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_2]:
-                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask = gcls_attention_mask, 
-                                              gcls_attention_mask_2 = gcls_attention_mask_2,
-                                              layer_L=train_layer_L, layer_L_2 = train_layer_L_2, g_config = self.train_g_config, 
-                                              g_token_pos = self.opt.g_token_pos)[:2]
+                                              extended_attention_mask = train_extended_attention_mask, 
+                                              pooler_type = args.g_pooler)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
                     loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
@@ -611,6 +616,8 @@ class Instructor:
                     
                 if self.global_step % self.opt.log_step == 0 and i_epoch > -1:
                     print('lr: ', self.optimizer.param_groups[0]['lr'])
+                    print('lr2: ', self.optimizer.param_groups[1]['lr'])
+                    
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
                     if task_name == 'mams':
@@ -629,7 +636,8 @@ class Instructor:
                     else:
                         result = self.do_eval()
                     tr_loss = tr_loss / nb_tr_steps
-                    # self.scheduler.step(result['eval_accuracy'])
+#                     self.scheduler.step(result['eval_accuracy'])
+#                     self.scheduler.step()
 #                     self.writer.add_scalar('train_loss', tr_loss, i_epoch)
 #                     self.writer.add_scalar('train_accuracy', train_accuracy_, i_epoch)
 #                     self.writer.add_scalar('eval_accuracy', result['eval_accuracy'], i_epoch)
@@ -711,14 +719,7 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask)[:2]
-                  
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_2]:
-                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask=gcls_attention_mask,
-                                              gcls_attention_mask_2=gcls_attention_mask_2,
-                                              layer_L=layer_L, layer_L_2 = layer_L_2, g_config = self.train_g_config, 
-                                              g_token_pos = self.opt.g_token_pos,
-                                              target_idx = torch.tensor(eval_target_idx))[:2]
+                                              extended_attention_mask = extended_att_mask, pooler_type = args.g_pooler)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
                     loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
@@ -956,7 +957,6 @@ if __name__ == "__main__":
         'fc': BertForSequenceClassification,
         'roberta': RobertaForSequenceClassification,
         'roberta_gcls': RobertaForSequenceClassification_gcls,
-        'roberta_gcls_2': RobertaForSequenceClassification_gcls_2,
         'roberta_gcls_td': RobertaForSequenceClassification_gcls_td,
         'roberta_asc_td': RobertaForSequenceClassification_asc_td,
         'roberta_lcf': RobertaForSequenceClassification_lcf,
