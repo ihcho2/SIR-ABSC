@@ -106,18 +106,57 @@ class BucketIterator_2(object):
 
             ############# RoBerta-gcls
             text_indices_copy = text_indices.copy()
-        
-            sent = 'target is'
+            
+            ######## 1.input format = s,s,...., target is X
+            
+#             sent = 'target is'
+#             for item in aspect:
+#                 sent += ' '
+#                 sent += item
+            
+#             text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            
+            ########
+            
+            
+            ######## 2. input format = s,g,...., g is X
+            
+            sent = ' is'
             for item in aspect:
                 sent += ' '
                 sent += item
-                
-#             text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent))
-            text_indices = [0] + [23976] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent))
-#             text_indices = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent))
             
-#             text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
-#             text_indices = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]    
+            text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+                    
+            ########
+            
+            
+            ######## 3. input format = s,g,...., target is X
+            
+#             sent = 'target is'
+#             for item in aspect:
+#                 sent += ' '
+#                 sent += item
+            
+#             text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            
+            ########
+            
+            
+            ######## 4. input format = s,g, ..., X
+#             sent = ''
+#             for item in aspect:
+#                 if sent == '':
+#                     sent += item
+#                 else:
+#                     sent += ' '
+#                     sent += item
+                    
+#             text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            
+            ########
+            
+        
             text_indices_lcf_global = text_indices_copy # 안 쓰임
             text_indices_lcf_local = text_indices_copy # 안 쓰임
             
