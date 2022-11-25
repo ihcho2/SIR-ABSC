@@ -82,6 +82,10 @@ def get_config():
                         default=5e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
+    parser.add_argument("--VIC_gate_lr",
+                        default=0.001,
+                        type=float,
+                        help="The initial learning rate for VIC_gate.")
     parser.add_argument("--num_train_epochs",
                         default=3.0,
                         type=float,
@@ -152,6 +156,8 @@ def get_config():
                         default = None,
                         help='g_config for each layer.')
     parser.add_argument('--gcls_att_cumul',
+                        type= boolean_string, default = False)
+    parser.add_argument('--VIC_auto',
                         type= boolean_string, default = False)
     parser.add_argument('--g_token_pos', type=int, default=1)
     parser.add_argument("--graph_type",
