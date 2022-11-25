@@ -179,6 +179,44 @@ def load_model_roberta_rpt(model, checkpoint1, checkpoint2, checkpoint3, checkpo
         
     return model
 
+
+def load_model_roberta_distinct(model, checkpoint1, checkpoint2=None, checkpoint3=None, checkpoint4=None, mode='student', verbose=True, DEBUG=False):
+    """
+
+    :param model:
+    :param checkpoint:
+    :param argstrain:
+    :param mode:  this is created because for old training the encoder and classifier are mixed together
+                  also adding student mode
+    :param train_mode:
+    :param verbose:
+    :return:
+    """
+
+    local_rank = -1
+    
+    model_keys = model.state_dict().keys()
+
+    model_state_dict = model.state_dict()
+
+    final_model_state_dict = model_state_dict.copy()
+
+    print('='*100)
+    for key in model_keys:
+        if 'intermediate_g' in key:
+            print(key)
+            new_key = key.replace('intermediate_g','intermediate')
+            final_model_state_dict[key] = model_state_dict[new_key]
+        if 'output_g' in key:
+            print(key)
+            new_key = key.replace('output_g','output')
+            final_model_state_dict[key] = model_state_dict[new_key]
+
+    model.load_state_dict(final_model_state_dict)
+        
+    return model
+
+
 def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=None, checkpoint5 =None, mode='student', verbose=True, DEBUG=False):
     """
 
