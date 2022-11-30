@@ -262,6 +262,7 @@ class RobertaSelfAttention(nn.Module):
         
         # Head-wise learning
         if gate != None:
+#             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + gate.log().view(-1,2,2).unsqueeze(1)
             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + gate.log().view(-1,12,2,2)
         
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
@@ -525,13 +526,24 @@ class RobertaLayer_auto(nn.Module):
         self.output = RobertaOutput(config)
         
         self.VIC_auto = True
-        self.VIC_gate_1 = nn.Linear(2*768, 48)
+        self.VIC_gate_1 = nn.Linear(3*768, 48)
+#         self.VIC_gate_2 = nn.Linear(768, 4)
+#         self.VIC_gate_3 = nn.Linear(128, 48)
+        
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
 
         self.VIC_gate_1.weight.data.normal_(mean=0.0, std=config.initializer_range)
         if self.VIC_gate_1.bias is not None:
             self.VIC_gate_1.bias.data.zero_()
+            
+#         self.VIC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
+#         if self.VIC_gate_2.bias is not None:
+#             self.VIC_gate_2.bias.data.zero_()
+            
+#         self.VIC_gate_3.weight.data.normal_(mean=0.0, std=config.initializer_range)
+#         if self.VIC_gate_3.bias is not None:
+#             self.VIC_gate_3.bias.data.zero_()
             
     def forward(
         self,
@@ -554,13 +566,17 @@ class RobertaLayer_auto(nn.Module):
         # 1. max 
 #         first_second_token_tensor = hidden_states[:, :2]
 #         cat = torch.max(first_second_token_tensor, dim=1)[0]
-#         gate = self.VIC_gate(cat)
+#         gate = self.VIC_gate_1(cat)
+#         gate = self.tanh(gate)
+#         gate = self.VIC_gate_2(gate)
 #         gate = self.sigmoid(gate)
 
         # 2. avg
 #         first_second_token_tensor = hidden_states[:, :2]
 #         cat = first_second_token_tensor.mean(dim = 1)
 #         gate = self.VIC_gate_1(cat)
+# #         gate = self.tanh(gate)
+# #         gate = self.VIC_gate_2(cat)
 #         gate = self.sigmoid(gate)
 
         # 3. Att
@@ -579,7 +595,16 @@ class RobertaLayer_auto(nn.Module):
 #         gate = self.sigmoid(gate)
 
         # 4. Concatenate
-        gate = self.VIC_gate_1(hidden_states[:, :2].view(-1, 2*768))
+#         gate = self.VIC_gate_1(hidden_states[:, :2].view(-1, 2*768))
+#         gate = self.tanh(gate)
+#         gate = self.VIC_gate_2(gate)
+#         gate = self.sigmoid(gate)
+        
+        # 5. x,y,x*y
+        input_tensor = torch.cat((hidden_states[:,:2].view(-1,2*768), hidden_states[:,0]*hidden_states[:,1]), dim= -1).view(-1, 3*768)
+        gate = self.VIC_gate_1(input_tensor)
+#         gate = self.tanh(gate)
+#         gate = self.VIC_gate_2(gate)
         gate = self.sigmoid(gate)
         
         self_attention_outputs = self.attention(
@@ -1379,7 +1404,7 @@ class RobertaPooler_gcls(nn.Module):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
-
+        
     def forward(self, hidden_states: torch.Tensor, pooler_type = None) -> torch.Tensor:
         if pooler_type == 'avg':
             first_second_token_tensor = hidden_states[:, :2]
@@ -1401,7 +1426,7 @@ class RobertaPooler_gcls(nn.Module):
             attention_scores = attention_scores.view(-1,2)
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-        
+            
         return final_output
         
 class RobertaPooler_gcls_2(nn.Module):
