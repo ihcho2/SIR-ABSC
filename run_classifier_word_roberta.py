@@ -409,7 +409,7 @@ class Instructor:
                 elif self.opt.model_name in ['roberta_gcls_td', 'roberta_asc_td']:
                     input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
                     input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
-                elif self.opt.model_name in ['roberta_gcls']:
+                elif self.opt.model_name in ['roberta_gcls', 'roberta_td']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                 elif self.opt.model_name in ['roberta']:
@@ -432,8 +432,8 @@ class Instructor:
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
                         print('guid: ', all_input_guids[0])
-                        print('train_extended_attention_mask layer 1')
-                        x = (train_extended_attention_mask[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        print('train_extended_attention_mask layer 13')
+                        x = (train_extended_attention_mask[12][0][0][1] == 0).nonzero(as_tuple=True)[0]
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
 #                         print('train_extended_attention_mask layer 5')
 #                         x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
@@ -521,7 +521,8 @@ class Instructor:
                                               lcf_matrix = train_lcf_matrix, gcls_attention_mask = gcls_attention_mask)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
-                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask = train_gcls_attention_mask)[:2]
+                    loss, logits = self.model(input_ids, labels = label_ids, extended_attention_mask = 
+                                              train_extended_attention_mask)[:2]
                     
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
@@ -692,7 +693,7 @@ class Instructor:
             elif self.opt.model_name in ['roberta_gcls_td', 'roberta_asc_td']:
                 input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
                 input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
-            elif self.opt.model_name in ['roberta_gcls']:
+            elif self.opt.model_name in ['roberta_gcls', 'roberta_td']:
                 input_ids = input_ids.to(self.opt.device)
                 if data_type == 'validation':
                     extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
@@ -740,7 +741,7 @@ class Instructor:
                                               lcf_matrix = eval_lcf_matrix, gcls_attention_mask = gcls_attention_mask)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
-                    loss, logits = self.model(input_ids, labels = label_ids, gcls_attention_mask = eval_gcls_attention_mask)[:2]
+                    loss, logits = self.model(input_ids, labels = label_ids, extended_attention_mask = extended_att_mask)[:2]
                             
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
