@@ -526,8 +526,8 @@ class RobertaLayer_auto(nn.Module):
         self.output = RobertaOutput(config)
         
         self.VIC_auto = True
-        self.VIC_gate_1 = nn.Linear(3*768, 48)
-#         self.VIC_gate_2 = nn.Linear(768, 4)
+        self.VIC_gate_1 = nn.Linear(768, 48)
+#         self.VIC_gate_2 = nn.Linear(768, 48)
 #         self.VIC_gate_3 = nn.Linear(128, 48)
         
         self.sigmoid = nn.Sigmoid()
@@ -572,12 +572,12 @@ class RobertaLayer_auto(nn.Module):
 #         gate = self.sigmoid(gate)
 
         # 2. avg
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = first_second_token_tensor.mean(dim = 1)
-#         gate = self.VIC_gate_1(cat)
-# #         gate = self.tanh(gate)
-# #         gate = self.VIC_gate_2(cat)
-#         gate = self.sigmoid(gate)
+        first_second_token_tensor = hidden_states[:, :2]
+        cat = first_second_token_tensor.mean(dim = 1)
+        gate = self.VIC_gate_1(cat)
+#         gate = self.tanh(gate)
+#         gate = self.VIC_gate_2(cat)
+        gate = self.sigmoid(gate)
 
         # 3. Att
 #         first_second_token_tensor = hidden_states[:, :2]
@@ -601,11 +601,11 @@ class RobertaLayer_auto(nn.Module):
 #         gate = self.sigmoid(gate)
         
         # 5. x,y,x*y
-        input_tensor = torch.cat((hidden_states[:,:2].view(-1,2*768), hidden_states[:,0]*hidden_states[:,1]), dim= -1).view(-1, 3*768)
-        gate = self.VIC_gate_1(input_tensor)
-#         gate = self.tanh(gate)
-#         gate = self.VIC_gate_2(gate)
-        gate = self.sigmoid(gate)
+#         input_tensor = torch.cat((hidden_states[:,:2].view(-1,2*768), hidden_states[:,0]*hidden_states[:,1]), dim= -1).view(-1, 3*768)
+#         gate = self.VIC_gate_1(input_tensor)
+# #         gate = self.tanh(gate)
+# #         gate = self.VIC_gate_2(gate)
+#         gate = self.sigmoid(gate)
         
         self_attention_outputs = self.attention(
             hidden_states,
@@ -3693,15 +3693,14 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
 
         self.roberta = RobertaModel(config, add_pooling_layer=True)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.roberta_pooler = RobertaPooler(config)
-        self.dense = nn.Linear(config.hidden_size, config.num_labels)
+#         self.dense = nn.Linear(config.hidden_size, config.num_labels)
         
         #### for att-based pooling
-        self.dense_1 = nn.Linear(config.hidden_size, config.hidden_size)
+#         self.dense_1 = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
         ####
         
-        # self.classifier = RobertaClassificationHead_gcls(config)
+        self.classifier = RobertaClassificationHead_gcls(config)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -3727,7 +3726,7 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        gcls_attention_mask = None,
+        extended_attention_mask = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -3750,27 +3749,28 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
         )[0]
         
         target_in_sent_embed = torch.zeros(input_ids.size()[0], features.size()[-1]).to(input_ids.device)
-        
         for i in range(input_ids.size()[0]):
-            x = (gcls_attention_mask[i][0] == 1).nonzero(as_tuple=True)[0]
+            x = (extended_attention_mask[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
             
             # 가장 기본적인 RoBERTa-TD
-            target_embed = features[i][x[0]-1:x[-1]+1-1]    # -1 -> cls가 1개.
+            target_embed = features[i][x[0]:x[-1]+1]
+            target_in_sent_embed[i] = target_embed.mean(dim = 0)
+#             target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
              
-            # Including [CLS]
-            TD = torch.max(target_embed, dim=0)[0]
-            cls_vec = features[i][0]
+#             # Including [CLS]
+#             TD = torch.max(target_embed, dim=0)[0]
+#             cls_vec = features[i][0]
             
-            ##############
-            two_tensors = torch.cat((TD.unsqueeze(0), cls_vec.unsqueeze(0)), 0)
-            c_vec = torch.mean(two_tensors, dim = 0)
-            c_vec = self.dense_1(c_vec)
-            c_vec = self.activation(c_vec)
+#             ##############
+#             two_tensors = torch.cat((TD.unsqueeze(0), cls_vec.unsqueeze(0)), 0)
+#             c_vec = torch.mean(two_tensors, dim = 0)
+#             c_vec = self.dense_1(c_vec)
+#             c_vec = self.activation(c_vec)
 
-            attention_scores = torch.matmul(c_vec.unsqueeze(0), two_tensors.transpose(0,1))
-            attention_scores = attention_scores.view(-1,2)
-            attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-            target_in_sent_embed[i] = torch.matmul(attention_probs, two_tensors).view(-1, 768)
+#             attention_scores = torch.matmul(c_vec.unsqueeze(0), two_tensors.transpose(0,1))
+#             attention_scores = attention_scores.view(-1,2)
+#             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+#             target_in_sent_embed[i] = torch.matmul(attention_probs, two_tensors).view(-1, 768)
             ##############
             
             
@@ -3781,8 +3781,7 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
             
         target_in_sent_embed = self.dropout(target_in_sent_embed)
         
-        
-        logits = self.dense(target_in_sent_embed)
+        logits = self.classifier(target_in_sent_embed)
         
         loss = None
         if labels is not None:
