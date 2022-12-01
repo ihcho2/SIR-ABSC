@@ -31,7 +31,7 @@ from packaging import version
 from torch import Tensor, device, nn
 from torch.nn import CrossEntropyLoss
 
-from transformers.utils.hub import convert_file_size_to_int, get_checkpoint_shard_files
+from transformers_.utils.hub import convert_file_size_to_int, get_checkpoint_shard_files
 from transformers.utils.import_utils import is_sagemaker_mp_enabled
 
 from .activations import get_activation
