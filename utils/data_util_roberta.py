@@ -65,7 +65,7 @@ class ReadData:
             self.DGEDT_validation_data = self.eval_data_loader.data
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
-        if opt.model_name in ['gcls', 'scls', 'roberta', 'gcls_er', 'gcls_moe', 'roberta_gcls', 'roberta_gcls_2', 'roberta_gcls_moe', 'roberta_td', 'roberta_lcf_td', 'roberta_gcls_td', 'roberta_asc_td']:
+        if opt.model_name in ['gcls', 'scls', 'roberta', 'gcls_er', 'gcls_moe', 'roberta_gcls', 'roberta_gcls_rpt', 'roberta_gcls_2', 'roberta_gcls_moe', 'roberta_td', 'roberta_lcf_td', 'roberta_gcls_td', 'roberta_asc_td']:
             
             if opt.graph_type == 'dg':
                 self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, self.opt.L_config_base, 
@@ -207,15 +207,8 @@ class ReadData:
             
             # Converting to gcls_att_mask. 
             aspect_length = len(DGEDT_train_data[i]['aspect_indices']) - 2
-            if self.opt.model_name in ['roberta_gcls']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_rpt']:
                 A =2 
-
-#                 A = 1    # for using target at the end as Graph-s.
-#                 available_room = 128 - len([0] + DGEDT_train_data[i]['text_indices'][1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + DGEDT_train_data[i]['aspect_indices']) -1 # -1 for the comma.
-#                 if available_room > aspect_length:
-#                     A = 1 + aspect_length + 1 # +1 for the comma
-#                 else:
-#                     A = 1 + available_room
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
             elif self.opt.model_name in ['roberta_td', 'roberta']:
@@ -238,25 +231,6 @@ class ReadData:
                         att_mask[start_idx:end_idx] = 1
                         
                     gcls_attention_mask[i][j][k] = att_mask
-
-#         overlap doesn't occur when cumul = False. Overlap inevitabily occurs for cumul = True
-#         print('='*77)
-#         print('Checking any overlaps')
-#         for i in range(len(DGEDT_train_data)):
-#             for j in range(max(layer_L)+1):
-#                 for k in range(j+1, max(layer_L)+1):
-#                     x = gcls_attention_mask[i][j][0] + gcls_attention_mask[i][k][0]
-#                     y = (x == 2).nonzero(as_tuple=True)[0]
-#                     if len(y) != 0:
-#                         print('='*77)
-#                         print('i: ', i)
-#                         print('j: ', j)
-#                         print('k: ', k)
-#                         print('y: ', y)
-#                         print('length_R_trans[i][0][0]: ', length_R_trans[i][0][0]) 
-#                         print('gcls_attention_mask[i][j][0]: ', gcls_attention_mask[i][j][0])
-#                         print('gcls_attention_mask[i][k][0]: ', gcls_attention_mask[i][k][0])
-
 
         print('='*77)
         print('reporting DG statistics')
@@ -302,7 +276,7 @@ class ReadData:
             final_all_paths.append(all_paths)
             
             # Now let's make the gcls_att_mask.
-            if self.opt.model_name in ['roberta_gcls']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_rpt']:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
@@ -556,7 +530,7 @@ class ReadData:
 #         print('extended_attention_mask.size() should be [N,12,1,128,128] ', extended_attention_mask.size())
 
         # head 고려
-        extended_attention_mask = extended_attention_mask.unsqueeze(1).repeat(1,12,1,1,1)
+        extended_attention_mask = extended_attention_mask.unsqueeze(1).repeat(1,13,1,1,1)
         print('extended_attention_mask.size() should be [N,12,12,128,128] ', extended_attention_mask.size())
 
 #         for j, item in enumerate(self.opt.L_config_base):
@@ -579,6 +553,23 @@ class ReadData:
                                                   [self.opt.g_config[6], self.opt.g_config[7]]], dtype = torch.float))
         
         for i in range(all_input_ids.size(0)):
+            # 13번째에 무조건 그냥 target position 만 추가. 111333555777 같은 경우를 위해.
+            if self.opt.graph_type == 'dg':
+                extended_attention_mask[i, 12, 0, 1, :] =  (1 - gcls_attention_mask[i][0][0]) * -10000.0
+                
+                # if only the T
+                extended_attention_mask[i, 12, 0, 1, 0] = -10000.0
+#                 extended_attention_mask[i, 12, 0, 1, 1] = -10000.0
+                
+                # 즉 여기서 manipulate 가능.
+                
+            elif self.opt.graph_type == 'sd':
+                extended_attention_mask[i, 12, 0, 1, :] =  (1 - gcls_attention_mask[i][0]) * -10000.0
+                
+                # if only the T
+                extended_attention_mask[i, 12, 0, 1, 0] = -10000.0
+                extended_attention_mask[i, 12, 0, 1, 1] = -10000.0
+            
             for j, item in enumerate(self.opt.L_config_base):
 #                 extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
 
@@ -588,23 +579,6 @@ class ReadData:
 #                 extended_attention_mask[i, j, 0, self.opt.gcls_pos, self.opt.gcls_pos] = (1-g_config[j][1][1]) * -10000.0
 
                 if self.opt.graph_type == 'dg':
-                    # Uncumul 빠르게 체크.
-#                     if item > 0:
-#                         # 방법 1. target은 항상 포함하기.
-#                         x = gcls_attention_mask[i][item][0] - gcls_attention_mask[i][item-1][0]
-#                         assert torch.sum(x<0) == 0 
-#                         x = x + gcls_attention_mask[i][0][0]
-#                         x[0] = gcls_attention_mask[i][item][0][0]
-#                         x[1] = gcls_attention_mask[i][item][0][1]
-#                         x[x>=1] = 1
-#                         # 방법 2. target도 제외하기.
-#                         x = gcls_attention_mask[i][item][0] - gcls_attention_mask[i][item-1][0]
-#                         assert torch.sum(x<0) == 0
-#                         x[0] = gcls_attention_mask[i][item][0][0]
-#                         x[1] = gcls_attention_mask[i][item][0][1]
-#                         x[x>=1] = 1
-#                     else:
-#                         x = gcls_attention_mask[i][item][0]
                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
                 elif self.opt.graph_type == 'sd':
                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
