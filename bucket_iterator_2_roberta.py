@@ -108,12 +108,12 @@ class BucketIterator_2(object):
             text_indices_copy = text_indices.copy()
             
             ######## 0. For roberta baseline
-            sent = 'target is'
-            for item in aspect:
-                sent += ' '
-                sent += item
+#             sent = 'target is'
+#             for item in aspect:
+#                 sent += ' '
+#                 sent += item
             
-            text_indices = [0] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+#             text_indices = [0] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
             
             
             ######## 1.input format = s,s,...., target is X
@@ -130,12 +130,12 @@ class BucketIterator_2(object):
             
             ######## 2. input format = s,g,...., g is X
             
-#             sent = ' is'
-#             for item in aspect:
-#                 sent += ' '
-#                 sent += item
+            sent = ' is'
+            for item in aspect:
+                sent += ' '
+                sent += item
             
-#             text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
                     
             ########
             
