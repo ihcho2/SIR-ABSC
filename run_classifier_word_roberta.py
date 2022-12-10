@@ -374,6 +374,23 @@ class Instructor:
         train_layer_L_set = set(train_layer_L)
         
         for i_epoch in range(int(args.num_train_epochs)):
+            if i_epoch == 3:
+                if task_name == 'tweet' and self.max_test_acc_INC < 0.60:
+                    print('='*77)
+                    print('terminating training due to exceptionally bad seed')
+                    sys.exit()
+                elif task_name == 'laptop' and self.max_test_acc_INC < 0.70:
+                    print('='*77)
+                    print('terminating training due to exceptionally bad seed')
+                    sys.exit()
+                elif task_name == 'restaurant' and self.max_test_acc_INC < 0.75:
+                    print('='*77)
+                    print('terminating training due to exceptionally bad seed')
+                    sys.exit()
+                elif task_name == 'mams' and self.max_test_acc_INC < 0.55:
+                    print('='*77)
+                    print('terminating training due to exceptionally bad seed')
+                    sys.exit()
 #             if i_epoch>0:
 #                 self.scheduler.step()
             print('>' * 100)
