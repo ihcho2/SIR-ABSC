@@ -82,8 +82,12 @@ def get_config():
                         default=5e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
+    parser.add_argument("--VDC_gate_lr",
+                        default=0.0005,
+                        type=float,
+                        help="The initial learning rate for VDC_gate.")
     parser.add_argument("--VIC_gate_lr",
-                        default=0.001,
+                        default=0.0005,
                         type=float,
                         help="The initial learning rate for VIC_gate.")
     parser.add_argument("--num_train_epochs",
@@ -156,6 +160,8 @@ def get_config():
                         default = None,
                         help='g_config for each layer.')
     parser.add_argument('--gcls_att_cumul',
+                        type= boolean_string, default = False)
+    parser.add_argument('--VDC_auto',
                         type= boolean_string, default = False)
     parser.add_argument('--VIC_auto',
                         type= boolean_string, default = False)
