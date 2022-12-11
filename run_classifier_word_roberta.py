@@ -29,7 +29,7 @@ from sklearn.metrics import f1_score
 
 import time
 from data_utils import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_lcf, RobertaModel, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_td, RobertaForSequenceClassification_gcls_auto, RobertaForSequenceClassification_lcf_td, RobertaForSequenceClassification_asc_td
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_lcf, RobertaModel, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_td, RobertaForSequenceClassification_gcls_auto, RobertaForSequenceClassification_lcf_td, RobertaForSequenceClassification_asc_td, RobertaForSequenceClassification_gcls_VDC_VIC_auto
 
 from torch.distributions.bernoulli import Bernoulli
 
@@ -111,8 +111,13 @@ class Instructor:
                                'roberta_asc_td']:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
+            self.train_VDC_info = self.dataset.train_VDC_info.to(args.device)
+            self.eval_VDC_info = self.dataset.eval_VDC_info.to(args.device)
+            
             if task_name == 'mams':
                 self.validation_extended_attention_mask = self.dataset.validation_extended_attention_mask.to(args.device)
+                self.validation_VDC_info = self.dataset.validation_VDC_info.to(args.device)
+            
                 
         if args.model_name in ['roberta_lcf', 'roberta_lcf_td']:
             self.train_lcf_vec_list = self.dataset.train_lcf_vec_list
@@ -132,7 +137,11 @@ class Instructor:
             self.model = RobertaForSequenceClassification.from_pretrained('roberta-base')
     
         elif args.model_class == RobertaForSequenceClassification_gcls:
-            if args.VIC_auto == True:
+            if args.VDC_auto == True and args.VIC_auto == True:
+                self.model = RobertaForSequenceClassification_gcls_VDC_VIC_auto.from_pretrained('roberta-base')
+            elif args.VDC_auto == True and args.VIC_auto == False:
+                pass
+            elif args.VDC_auto == False and args.VIC_auto == True:
                 self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base')
             else:
                 self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base')
@@ -244,16 +253,49 @@ class Instructor:
             if args.VIC_auto == True:
                 VIC_params = []
                 for n, p in self.param_optimizer:
-                    if 'VIC' in n:
+                    if 'VIC_gate' in n:
                         VIC_params.append(n)
                         
-                print(VIC_params)
+                if args.VDC_auto == True:
+                    VDC_params = []
+                    for n, p in self.param_optimizer:
+                        if 'VDC_gate' in n:
+                            VDC_params.append(n)
+                            
+                    non_gate_params = []
+                    for n, p in self.param_optimizer:
+                        if n not in VIC_params and n not in VDC_params:
+                            non_gate_params.append(p)
+                            
+                    optimizer_grouped_parameters = [
+                        {'params': [p for p in non_gate_params],
+                         'weight_decay_rate': 0.01},
+                        {'params': [p for n, p in self.param_optimizer if n in VIC_params],
+                         'weight_decay_rate': 0.01, 'lr': args.VIC_gate_lr},
+                        {'params': [p for n, p in self.param_optimizer if n in VDC_params],
+                         'weight_decay_rate': 0.01, 'lr': args.VDC_gate_lr}
+                    ]
+                        
+                else:
+                    optimizer_grouped_parameters = [
+                        {'params': [p for n, p in self.param_optimizer if n not in VIC_params],
+                         'weight_decay_rate': 0.01},
+                        {'params': [p for n, p in self.param_optimizer if n in VIC_params],
+                         'weight_decay_rate': 0.01, 'lr': args.VIC_gate_lr}
+                    ]
+            elif args.VDC_auto == True:
+                VDC_params = []
+                for n, p in self.param_optimizer:
+                    if 'VDC_gate' in n:
+                        VDC_params.append(n)
+                
                 optimizer_grouped_parameters = [
-                    {'params': [p for n, p in self.param_optimizer if n not in VIC_params],
-                     'weight_decay_rate': 0.01},
-                    {'params': [p for n, p in self.param_optimizer if n in VIC_params],
-                     'weight_decay_rate': 0.01, 'lr': args.VIC_gate_lr},
-                ]
+                        {'params': [p for n, p in self.param_optimizer if n not in VDC_params],
+                         'weight_decay_rate': 0.01},
+                        {'params': [p for n, p in self.param_optimizer if n in VDC_params],
+                         'weight_decay_rate': 0.01, 'lr': args.VDC_gate_lr}
+                    ]
+                
             else:
                 optimizer_grouped_parameters = [
                     {'params': [p for n, p in self.param_optimizer if n not in no_decay],
@@ -429,6 +471,7 @@ class Instructor:
                 elif self.opt.model_name in ['roberta_gcls', 'roberta_td']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
+                    train_VDC_info = self.train_VDC_info[all_input_guids]
                 elif self.opt.model_name in ['roberta']:
                     input_ids = input_ids.to(self.opt.device)
                 else:
@@ -452,6 +495,10 @@ class Instructor:
                         print('train_extended_attention_mask layer 13')
                         x = (train_extended_attention_mask[12][0][0][1] == 0).nonzero(as_tuple=True)[0]
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        print('train_VDC_info[0] target: ')
+                        x = (train_VDC_info[0] == 1).nonzero(as_tuple=True)[0]
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        
 #                         print('train_extended_attention_mask layer 5')
 #                         x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
 #                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
@@ -517,7 +564,7 @@ class Instructor:
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = train_extended_attention_mask, 
-                                              pooler_type = args.g_pooler)[:2]
+                                              pooler_type = args.g_pooler, VDC_info = train_VDC_info)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
                     loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
@@ -714,8 +761,10 @@ class Instructor:
                 input_ids = input_ids.to(self.opt.device)
                 if data_type == 'validation':
                     extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
+                    eval_VDC_info = self.validation_VDC_info[all_input_guids]
                 else:
                     extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
+                    eval_VDC_info = self.eval_VDC_info[all_input_guids]
             elif self.opt.model_name in ['roberta']:
                 input_ids = input_ids.to(self.opt.device)
             else:
@@ -737,7 +786,8 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask, pooler_type = args.g_pooler)[:2]
+                                              extended_attention_mask = extended_att_mask, pooler_type = args.g_pooler,
+                                              VDC_info = eval_VDC_info)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
                     loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
