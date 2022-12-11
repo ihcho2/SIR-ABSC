@@ -11,6 +11,10 @@ from bucket_iterator_2_roberta import BucketIterator_2
 import pickle
 from transformers import BertTokenizer, RobertaTokenizer
 
+import spacy
+
+nlp = spacy.load('en_core_web_sm')
+
 # tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 
@@ -26,6 +30,15 @@ def length2mask(length,maxlength):
 class ReadData:
     def __init__(self, opt):
         print("load data ...")
+        if os.path.exists(opt.data_dir + '/train.raw'):
+            train_raw = open(opt.data_dir +'/train.raw', 'r', encoding='utf-8', newline='\n', errors='ignore')
+        elif os.path.exists(opt.data_dir + '/laptop_train.raw'):
+            train_raw = open(opt.data_dir +'/laptop_train.raw', 'r', encoding='utf-8', newline='\n', errors='ignore')
+        elif os.path.exists(opt.data_dir + '/restaurant_train.raw'):
+            train_raw = open(opt.data_dir +'/restaurant_train.raw', 'r', encoding='utf-8', newline='\n', errors='ignore') 
+            
+        self.train_raw = train_raw.readlines()
+        
         self.opt = opt
         self.train_examples = opt.processor.get_train_examples(opt.data_dir)
         self.eval_examples = opt.processor.get_dev_examples(opt.data_dir)
@@ -65,7 +78,7 @@ class ReadData:
             self.DGEDT_validation_data = self.eval_data_loader.data
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
-        if opt.model_name in ['gcls', 'scls', 'roberta', 'gcls_er', 'gcls_moe', 'roberta_gcls', 'roberta_gcls_rpt', 'roberta_gcls_2', 'roberta_gcls_moe', 'roberta_td', 'roberta_lcf_td', 'roberta_gcls_td', 'roberta_asc_td']:
+        if opt.model_name in ['gcls', 'scls', 'roberta', 'gcls_er', 'gcls_moe', 'roberta_gcls', 'roberta_gcls_rpt', 'roberta_gcls_2', 'roberta_gcls_moe', 'roberta_td', 'roberta_fm', 'roberta_lcf_td', 'roberta_gcls_td', 'roberta_asc_td']:
             
             if opt.graph_type == 'dg':
                 self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, self.opt.L_config_base, 
@@ -86,19 +99,19 @@ class ReadData:
         ######################
         
         self.train_data, self.train_dataloader, self.train_tran_indices, self.train_span_indices, \
-        self.train_extended_attention_mask  = self.get_data_loader(examples=self.train_examples, type='train_data',
-                                                                   gcls_attention_mask = self.train_gcls_attention_mask, 
-                                                                   path_types = self.opt.path_types)
+        self.train_extended_attention_mask, self.train_VDC_info  = self.get_data_loader(examples=self.train_examples, 
+                                                                                        type='train_data', gcls_attention_mask =
+                                                                                        self.train_gcls_attention_mask, 
+                                                                                        path_types = self.opt.path_types)
         
         self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices, \
-        self.eval_extended_attention_mask = self.get_data_loader(examples=self.eval_examples, type='eval_data', 
-                                                                 gcls_attention_mask = self.eval_gcls_attention_mask,
-                                                                 path_types = self.opt.path_types)
+        self.eval_extended_attention_mask, self.eval_VDC_info = self.get_data_loader(examples=self.eval_examples, 
+                                                                                     type='eval_data', gcls_attention_mask = 
+                                                                                     self.eval_gcls_attention_mask, 
+                                                                                     path_types = self.opt.path_types)
         if opt.task_name == 'mams':
             self.validation_data, self.validation_dataloader, self.validation_tran_indices, self.validation_span_indices, \
-            self.validation_extended_attention_mask = self.get_data_loader(examples=self.validation_examples, type='validation', 
-                                                                 gcls_attention_mask = self.validation_gcls_attention_mask,
-                                                                 path_types = self.opt.path_types)
+            self.validation_extended_attention_mask, self.validation_VDC_info = self.get_data_loader(examples=self.validation_examples, type='validation',gcls_attention_mask = self.validation_gcls_attention_mask,path_types = self.opt.path_types)
             
                   
     def process_DG(self, DGEDT_train_data, layer_L, path_types = None):
@@ -211,7 +224,7 @@ class ReadData:
                 A =2 
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
-            elif self.opt.model_name in ['roberta_td', 'roberta']:
+            elif self.opt.model_name in ['roberta_td', 'roberta', 'roberta_fm']:
                 A = 1
             
             # target_idx
@@ -280,7 +293,7 @@ class ReadData:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
-            elif self.opt.model_name in ['roberta', 'roberta_td']:
+            elif self.opt.model_name in ['roberta', 'roberta_td', 'roberta_fm']:
                 A = 1
             
             sep_pos = len(DGEDT_train_data[i]['text_indices'])
@@ -536,7 +549,11 @@ class ReadData:
 #         for j, item in enumerate(self.opt.L_config_base):
 #             for i in range(all_input_ids.size(0)):
 #                 extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-
+        
+        # VDC_info: for VDC-automation
+        VDC_info = torch.full([all_input_ids.size(0), 128], 0) 
+        
+        
         g_config = []
         if len(self.opt.g_config) == 4:
             for i in range(12):
@@ -570,6 +587,24 @@ class ReadData:
                 extended_attention_mask[i, 12, 0, 1, 0] = -10000.0
                 extended_attention_mask[i, 12, 0, 1, 1] = -10000.0
             
+            for item in reversed(range(6)):
+                VDC_info[i][gcls_attention_mask[i][item][0] == 1] = item+1
+                
+            if i % 300 == 0 and type=='train_data':
+                print('='*77)
+                print('all_input_guids[i]: ', all_input_guids[i])
+                x = (all_input_ids[i] == 1).nonzero(as_tuple=True)[0]
+                print('all_input_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_ids[i][:x[0]]))
+                print('-'*77)
+                x = (all_input_t_ids[i] == 1).nonzero(as_tuple=True)[0]
+                print('all_input_t_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_t_ids[i][:x[0]]))
+                print('VDC_info[i]: ', VDC_info[i])
+                print('-'*77)
+                print('self.train_raw[3*i]: ', self.train_raw[3*i])
+                
+#                 raw file을 불러오고 i 번째 가지고 와서 spacy 가하면 될 듯?
+#                 여기에 실제 데이터 raw 보여주고, aspect 보여주고 spacy 했을 때 그림 결과 보여주게끔 코드를 보여주기.
+                
             for j, item in enumerate(self.opt.L_config_base):
 #                 extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
 
@@ -643,11 +678,11 @@ class ReadData:
         if type == 'train_data':
             train_data = data
             train_sampler = RandomSampler(data)
-            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices, extended_attention_mask
+            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info
         else:
             eval_data = data
             eval_sampler = SequentialSampler(eval_data)
-            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices, extended_attention_mask
+            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info
 
     def convert_examples_to_features(self, examples, label_list, max_seq_length, tokenizer):
         """Loads a data file into a list of `InputBatch`s."""
