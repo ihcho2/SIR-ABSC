@@ -1700,24 +1700,39 @@ class RobertaPooler_TD(nn.Module):
         self.activation = nn.Tanh()
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_states: torch.Tensor, extended_attention_mask_pooler) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, extended_attention_mask_pooler, VDC_info=None) -> torch.Tensor:
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
-        target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]).to(hidden_states.device)
-        for i in range(hidden_states.size()[0]):
-            x = (extended_attention_mask_pooler[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
-            
-            # 가장 기본적인 RoBERTa-TD
-            target_embed = hidden_states[i][x[0]:x[-1]+1]
-            # 1. RoBERTa-TD-avg
-            target_in_sent_embed[i] = target_embed.mean(dim = 0)
-            # 2. RoBERTa-TD-max
-#             target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
         
-        target_in_sent_embed = self.dropout(target_in_sent_embed)
-        pooled_output = self.dense(target_in_sent_embed)
+#         # 직접 검토 (1):
+#         target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]).to(hidden_states.device)
+#         for i in range(hidden_states.size()[0]):
+#             x = (extended_attention_mask_pooler[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
+            
+#             # 가장 기본적인 RoBERTa-TD
+#             target_embed = hidden_states[i][x[0]:x[-1]+1]
+#             # 1. RoBERTa-TD-avg
+#             target_in_sent_embed[i] = target_embed.mean(dim = 0)
+#             # 2. RoBERTa-TD-max
+# #             target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
+
+        # 직접 검토 (2): index는 assertion 위해 위에
+        
+        index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+        index = index.long()
+        
+        mask = index.unsqueeze(2)
+        pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+#         for i in range(target_in_sent_embed.size(0)):
+#             assert torch.sum((target_in_sent_embed[i] - pooled[i])**2) < 0.000001
+        
+        pooled = self.dropout(pooled)
+        
+        pooled_output = self.dense(pooled)
         pooled_output = self.activation(pooled_output)
+        
         return pooled_output
+    
     
 class RobertaPooler_gcls(nn.Module):
     def __init__(self, config):
@@ -1841,17 +1856,15 @@ class RobertaPooler_gcls(nn.Module):
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
-            # target token vectors
-            target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]*3).to(hidden_states.device)
-            for i in range(hidden_states.size()[0]):
-                x = (extended_attention_mask_pooler[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
-
-                # 가장 기본적인 RoBERTa-TD
-                target_embed = hidden_states[i][x[0]:x[-1]+1]
-                target_embed = torch.max(target_embed, dim=0)[0]
-                target_in_sent_embed[i] = torch.cat((first_second_token_tensor[i], target_embed.unsqueeze(0)),
-                                                    dim=0).reshape(768*3)
-
+            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+            index_2[index_2 != index_2] = 0
+            index = index.long()
+            mask = index.unsqueeze(2)
+            mask_2 = index_2.unsqueeze(2)
+            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            
+            target_in_sent_embed = torch.cat((first_second_token_tensor, pooled.unsqueeze(1)), dim = 1).reshape(-1,3*768)
             target_in_sent_embed = self.dropout(target_in_sent_embed)
             pooled_output = self.dense_2(target_in_sent_embed)
             final_output = self.activation(pooled_output)
