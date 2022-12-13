@@ -266,17 +266,31 @@ class RobertaSelfAttention(nn.Module):
         if VIC_gate != None:
 #             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + gate.log().view(-1,2,2).unsqueeze(1)
 #             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + VIC_gate.log().view(-1,12,2,2)
-            attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,12,2,2)
+            
+            attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + VIC_gate.log().view(-1,2,2).unsqueeze(1)
+#             attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,12,2,2)
             
         if VDC_gate != None:
-            VDC_info = VDC_info.long().unsqueeze(1).repeat(1,12,1)
-            VDC_gate = nn.functional.softmax(VDC_gate.reshape(-1, 12, 7), dim = -1)
+#             VDC_info = VDC_info.long().unsqueeze(1).repeat(1,12,1)
+#             VDC_gate = nn.functional.softmax(VDC_gate.reshape(-1, 12, 7), dim = -1)
+# #             y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
+#             y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1).unsqueeze(2), torch.arange(12).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
+            
+# #             assert (y == y2).all()
+            
+#             attention_scores[:,:,1,2:] += y[:,:,2:].log()
+            
+            #########################
+            # if not headwise
+            VDC_info = VDC_info.long()
+            VDC_gate = nn.functional.softmax(VDC_gate, dim = -1)
 #             y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
-            y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1).unsqueeze(2), torch.arange(12).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
+            y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
             
 #             assert (y == y2).all()
             
-            attention_scores[:,:,1,2:] += y[:,:,2:].log()
+            attention_scores[:,:,1,2:] += y[:, 2:].unsqueeze(1).log()
+            #########################
 
             
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
@@ -702,17 +716,22 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
         self.output = RobertaOutput(config)
         
         self.VIC_auto = True
-        self.VIC_gate_1 = nn.Linear(3*768, 48)
+        self.VIC_gate_1 = nn.Linear(768, 48)
+#         self.VIC_gate_1 = nn.Linear(3*768, 4)
+        
 #         self.VIC_gate_2 = nn.Linear(768, 48)
 #         self.VIC_gate_3 = nn.Linear(128, 48)
         
         self.VDC_auto = True
-        self.VDC_gate_1 = nn.Linear(3*768, 12*7)
+        self.VDC_gate_1 = nn.Linear(768, 12*7)
+#         self.VDC_gate_1 = nn.Linear(3*768, 7)
+        
 #         self.VDC_gate_2 = nn.Linear(768, 12*7)
         
         
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         self.VIC_gate_1.weight.data.normal_(mean=0.0, std=config.initializer_range)
         if self.VIC_gate_1.bias is not None:
@@ -743,67 +762,58 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
         gcls_update = False,
         g_config = None,
         VDC_info = None,
+        a_pooler = None,
     ) -> Tuple[torch.Tensor]:
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
         
-        ## Automating VIC
-        gate = None
-        # 1. max 
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = torch.max(first_second_token_tensor, dim=1)[0]
-#         gate = self.VIC_gate_1(cat)
-#         gate = self.tanh(gate)
-#         gate = self.VIC_gate_2(gate)
-#         gate = self.sigmoid(gate)
-
-        # 2. avg
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = first_second_token_tensor.mean(dim = 1)
-#         gate = self.VIC_gate_1(cat)
-# #         gate = self.tanh(gate)
-# #         gate = self.VIC_gate_2(cat)
-#         gate = self.sigmoid(gate)
-
-        # 3. Att
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = torch.mean(first_second_token_tensor, dim=1)
-#         gate_ = self.VIC_gate_1(cat)
-
-#         gate_ = self.tanh(gate_)
-
-#         attention_scores = torch.matmul(gate_.unsqueeze(1), first_second_token_tensor.transpose(1,2))
-#         attention_scores = attention_scores.view(-1,2)
-#         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-#         final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-
-#         gate = self.VIC_gate_2(final_output)
-#         gate = self.sigmoid(gate)
-
-        # 4. Concatenate
-    
+        ## Automating VDC & VIC
         mask = (VDC_info == 1).long().unsqueeze(2)
         
         #################################
-        ## (1) avg pooling
-#         pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
-        
-        ## (2) max pooling
-        index_2 = (VDC_info != 1).long()*-float('inf')
-        index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
-        mask_2 = index_2.unsqueeze(2)
-        pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+        if a_pooler == 't_avg_only':
+            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            V_input = self.dropout(pooled)
+            # 한국어: 이거 dense 넓이 맞춰야할 거 같은데 -> 일단 수동으로.
+        elif a_pooler == 't_avg_all':
+            mask[:, :2] = 1 # Allows considering s and g
+            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            V_input = self.dropout(pooled)
+        elif a_pooler == 't_max_only':
+            index_2 = (VDC_info != 1).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask_2 = index_2.unsqueeze(2)
+            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            V_input = self.dropout(pooled)
+        elif a_pooler == 't_max_all':
+            mask[:, :2] = 1 # Allows considering s and g
+            index_2 = (VDC_info != 1).long()*-float('inf')
+            index_2[:,:2] = 0 # Allows considering s and g
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask_2 = index_2.unsqueeze(2)
+            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            V_input = self.dropout(pooled)
+        elif a_pooler == 't_avg_concat':
+            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            concat_vector = torch.cat((hidden_states[:,:2], pooled.unsqueeze(1)), dim = 1).reshape(-1, 3*768)
+            V_input = self.dropout(pooled)
+        elif a_pooler == 't_max_concat':
+            index_2 = (VDC_info != 1).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask_2 = index_2.unsqueeze(2)
+            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            concat_vector = torch.cat((hidden_states[:,:2], pooled.unsqueeze(1)), dim = 1).reshape(-1, 3*768)
+            V_input = self.dropout(pooled)
         #################################
         
         
-        concat_vector = torch.cat((hidden_states[:,:2], pooled.unsqueeze(1)), dim = 1).reshape(-1, 3*768)
         
-        VIC_gate = self.VIC_gate_1(concat_vector)
+        VIC_gate = self.VIC_gate_1(V_input)
 #         VIC_gate = self.tanh(VIC_gate)
 #         VIC_gate = self.VIC_gate_2(VIC_gate)
         VIC_gate = self.sigmoid(VIC_gate)
         
-        VDC_gate = self.VDC_gate_1(concat_vector)
+        VDC_gate = self.VDC_gate_1(V_input)
 #         VDC_gate = self.tanh(VDC_gate)
 #         VDC_gate = self.VDC_gate_2(VDC_gate)
         
@@ -1204,6 +1214,7 @@ class RobertaEncoder_gcls_VDC_VIC_auto(nn.Module):
         output_hidden_states: Optional[bool] = False,
         return_dict: Optional[bool] = True,
         VDC_info = None,
+        a_pooler = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -1256,6 +1267,7 @@ class RobertaEncoder_gcls_VDC_VIC_auto(nn.Module):
                     output_attentions,
                     gcls_update = gcls_update,
                     VDC_info = VDC_info,
+                    a_pooler = a_pooler,
                 )
 
             hidden_states = layer_outputs[0]
@@ -1737,23 +1749,25 @@ class RobertaPooler_TD(nn.Module):
 # #             target_in_sent_embed[i] = target_embed.mean(dim = 0)
 #             # 2. RoBERTa-TD-max
 #             target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
-
+        
+        #########################
         # avg pooling
-#         index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
-#         index = index.long()
-        
-#         mask = index.unsqueeze(2)
-#         pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
-        
-        # max_pooling
         index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
         index = index.long()
-        index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
-        index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
-        mask = index.unsqueeze(2)
-        mask_2 = index_2.unsqueeze(2)
-        pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
         
+        mask = index.unsqueeze(2)
+        pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+        
+        # max_pooling
+#         index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+#         index = index.long()
+#         index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+#         index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+#         mask = index.unsqueeze(2)
+#         mask_2 = index_2.unsqueeze(2)
+#         pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+        #########################
+    
 #         for i in range(target_in_sent_embed.size(0)):
 #             assert torch.sum((target_in_sent_embed[i] - pooled[i])**2) < 0.000001
         
@@ -1807,27 +1821,31 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense(first_token_tensor)
             final_output = self.activation(pooled_output)
         
-        elif pooler_type == 't_avg':
+        elif pooler_type == 't_avg_only':
+            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = index.long()
+
+            mask = index.unsqueeze(2)
+            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            pooled = self.dropout(pooled)
+            pooled_output = self.dense(pooled)
+            final = self.activation(pooled_output)
+            
+        elif pooler_type == 't_avg_all':
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
-            # target token vectors
-            target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]).to(hidden_states.device)
-            for i in range(hidden_states.size()[0]):
-                x = (extended_attention_mask_pooler[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
+            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index[:,:2] = 1
+            index = index.long()
 
-                # 가장 기본적인 RoBERTa-TD
-                target_embed = hidden_states[i][x[0]:x[-1]+1]
+            mask = index.unsqueeze(2)
+            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
                 
-                # 1. RoBERTa-TD-avg
-                target_embed = torch.cat((first_second_token_tensor[i], target_embed), dim = 0)
-                target_in_sent_embed[i] = target_embed.mean(dim = 0)
-                # 2. RoBERTa-TD-max
-    #             target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
-
-            target_in_sent_embed = self.dropout(target_in_sent_embed)
-            pooled_output = self.dense(target_in_sent_embed)
-            final_output = self.activation(pooled_output)
+            pooled = self.dropout(pooled)
+            pooled_output = self.dense(pooled)
+            final = self.activation(pooled_output)
             
         elif pooler_type == 't_avg_concat':
             first_second_token_tensor = hidden_states[:, :2]
@@ -1877,6 +1895,20 @@ class RobertaPooler_gcls(nn.Module):
 
             target_in_sent_embed = self.dropout(target_in_sent_embed)
             pooled_output = self.dense(target_in_sent_embed)
+            final_output = self.activation(pooled_output)
+            
+        elif pooler_type == 't_max_only':
+            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = index.long()
+            index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask = index.unsqueeze(2)
+            mask_2 = index_2.unsqueeze(2)
+            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            
+            pooled = self.dropout(pooled)
+        
+            pooled_output = self.dense(pooled)
             final_output = self.activation(pooled_output)
             
         elif pooler_type == 't_max_concat':
@@ -2918,6 +2950,7 @@ class RobertaModel_gcls_VDC_VIC_auto(RobertaPreTrainedModel):
         extended_attention_mask = None,
         pooler_type = None,
         VDC_info = None,
+        a_pooler = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -3031,7 +3064,8 @@ class RobertaModel_gcls_VDC_VIC_auto(RobertaPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            VDC_info = VDC_info
+            VDC_info = VDC_info,
+            a_pooler = a_pooler,
         )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output, pooler_type = pooler_type, 
@@ -3900,6 +3934,7 @@ class RobertaForSequenceClassification_gcls_VDC_VIC_auto(RobertaPreTrainedModel)
         extended_attention_mask = None,
         pooler_type = None,
         VDC_info = None,
+        a_pooler = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -3921,7 +3956,8 @@ class RobertaForSequenceClassification_gcls_VDC_VIC_auto(RobertaPreTrainedModel)
             return_dict=return_dict,
             extended_attention_mask = extended_attention_mask,
             pooler_type = pooler_type,
-            VDC_info = VDC_info
+            VDC_info = VDC_info,
+            a_pooler = a_pooler
         )
         sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
         logits = self.classifier(sequence_output)
