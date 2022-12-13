@@ -264,6 +264,11 @@ class RobertaSelfAttention(nn.Module):
         
         # Head-wise learning
         if VIC_gate != None:
+#             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + gate.log().view(-1,2,2).unsqueeze(1)
+#             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + VIC_gate.log().view(-1,12,2,2)
+            attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,12,2,2)
+            
+        if VDC_gate != None:
             VDC_info = VDC_info.long().unsqueeze(1).repeat(1,12,1)
             VDC_gate = nn.functional.softmax(VDC_gate.reshape(-1, 12, 7), dim = -1)
 #             y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
@@ -777,17 +782,17 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
 
         # 4. Concatenate
     
-        mask = (VDC_info == 0).long().unsqueeze(2)
+        mask = (VDC_info == 1).long().unsqueeze(2)
         
         #################################
         ## (1) avg pooling
-        pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+#         pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
         
         ## (2) max pooling
-#         index_2 = (VDC_info != 0.0).long()*-float('inf')
-#         index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
-#         mask_2 = index_2.unsqueeze(2)
-#         pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+        index_2 = (VDC_info != 1).long()*-float('inf')
+        index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+        mask_2 = index_2.unsqueeze(2)
+        pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
         #################################
         
         
