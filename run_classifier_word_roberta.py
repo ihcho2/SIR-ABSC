@@ -29,7 +29,7 @@ from sklearn.metrics import f1_score
 
 import time
 from data_utils import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_lcf, RobertaModel, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_td, RobertaForSequenceClassification_gcls_auto, RobertaForSequenceClassification_lcf_td, RobertaForSequenceClassification_asc_td, RobertaForSequenceClassification_gcls_VDC_VIC_auto
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_auto
 
 from torch.distributions.bernoulli import Bernoulli
 
@@ -43,6 +43,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+torch.set_printoptions(sci_mode=False)
 
 def accuracy(out, labels):
     outputs = np.argmax(out, axis=1)
@@ -107,8 +108,7 @@ class Instructor:
             self.validation_tran_indices = self.dataset.validation_tran_indices
             self.validation_span_indices = self.dataset.validation_span_indices
         
-        if args.model_name in ['gcls', 'scls','roberta_gcls','roberta_td', 'roberta_lcf_td', 'roberta_gcls_td',
-                               'roberta_asc_td']:
+        if args.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto' ]:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
             self.train_VDC_info = self.dataset.train_VDC_info.to(args.device)
@@ -135,44 +135,26 @@ class Instructor:
         elif args.model_class == RobertaForSequenceClassification:
 #             self.model = RobertaForSequenceClassification(roberta_config)
             self.model = RobertaForSequenceClassification.from_pretrained('roberta-base')
-    
-        elif args.model_class == RobertaForSequenceClassification_gcls:
-            if args.VDC_auto == True and args.VIC_auto == True:
-                self.model = RobertaForSequenceClassification_gcls_VDC_VIC_auto.from_pretrained('roberta-base')
-            elif args.VDC_auto == True and args.VIC_auto == False:
-                pass
-            elif args.VDC_auto == False and args.VIC_auto == True:
-                self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base')
-            else:
-                self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base')
-            
-            print('-'*77)
-            print(self.model.roberta.embeddings.word_embeddings.weight.size())
-            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight[0]))
-            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[0]))
-            print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[50249]))
-            
-            self.model.roberta.embeddings.word_embeddings.weight.data[50249] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
-            
-            
-        elif args.model_class == RobertaForSequenceClassification_gcls_td:
-            self.model = RobertaForSequenceClassification_gcls_td.from_pretrained('roberta-base')
-            self.model.roberta_td = RobertaModel.from_pretrained("roberta-base")
-        elif args.model_class == RobertaForSequenceClassification_asc_td:
-            self.model = RobertaForSequenceClassification_asc_td.from_pretrained('roberta-base')
-            self.model.roberta_td = RobertaModel.from_pretrained("roberta-base")
-        elif args.model_class == RobertaForSequenceClassification_lcf:
-            self.model = RobertaForSequenceClassification_lcf.from_pretrained('roberta-base')
-            self.model.roberta_local = RobertaModel.from_pretrained("roberta-base")
-        elif args.model_class == RobertaForSequenceClassification_lcf_td:
-            self.model = RobertaForSequenceClassification_lcf_td.from_pretrained('roberta-base')
-            self.model.roberta_local = RobertaModel.from_pretrained("roberta-base")
         elif args.model_class == RobertaForSequenceClassification_TD:
             self.model = RobertaForSequenceClassification_TD.from_pretrained('roberta-base')
+        elif args.model_class == RobertaForSequenceClassification_gcls:
+            self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base')
+        elif args.model_class == RobertaForSequenceClassification_gcls_auto:
+            self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base', VDC_auto = args.VDC_auto, VIC_auto = args.VIC_auto, num_auto_layers = args.num_auto_layers, head_wise = args.head_wise, auto_VDC_k = args.auto_VDC_k, 
+                                                                                    a_pooler = args.a_pooler, 
+                                                                                    g_pooler = args.g_pooler)
         elif args.model_class == BertForSequenceClassification_gcls:
             self.model = BertForSequenceClassification_gcls(bert_config, len(self.dataset.label_list))
         else:
             self.model = model_classes[args.model_name](bert_config, args)
+        
+        print('-'*77)
+        print(self.model.roberta.embeddings.word_embeddings.weight.size())
+        print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight[0]))
+        print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[0]))
+        print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[50249]))
+
+        self.model.roberta.embeddings.word_embeddings.weight.data[50249] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
         
         if self.opt.model_name in ['gcls_moe']:
             self.model = load_model_MoE(self.model, self.opt.init_checkpoint, self.opt.init_checkpoint_2, 
@@ -189,7 +171,7 @@ class Instructor:
             self.model = load_model_roberta_rpt(self.model, self.opt.init_checkpoint, self.opt.init_checkpoint_2, 
                                         self.opt.init_checkpoint_3, self.opt.init_checkpoint_4)
         else:
-            if args.model_name not in ['roberta', 'roberta_gcls', 'roberta_gcls_2', 'roberta_gcls_td', 'roberta_lcf', 'robeta_lcf_td', 'roberta_td', 'roberta_asc_td'] and 'pytorch_model.bin' in self.opt.init_checkpoint:
+            if args.model_name not in ['roberta', 'roberta_td', 'roberta_gcls', 'roberta_gcls_auto'] and 'pytorch_model.bin' in self.opt.init_checkpoint:
                 self.model.load_state_dict(torch.load(self.opt.init_checkpoint, map_location='cpu'))
                 print('-'*77)
                 print('Loading from ', self.opt.init_checkpoint)
@@ -249,7 +231,10 @@ class Instructor:
             
             self.optimizer_gcn = None
         
-        elif args.model_name in ['roberta', 'roberta_gcls', 'roberta_gcls_2', 'roberta_gcls_td', 'roberta_lcf', 'roberta_lcf_td','roberta_td', 'roberta_asc_td']:
+        elif args.model_name in ['roberta', 'roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
+            VIC_params = None
+            VDC_params = None
+            
             if args.VIC_auto == True:
                 VIC_params = []
                 for n, p in self.param_optimizer:
@@ -306,6 +291,10 @@ class Instructor:
             
             self.optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8)
             self.scheduler = LambdaLR(self.optimizer, lr_lambda = lambda epoch: 0.95 ** epoch)
+            
+            print('='*77)
+            print('VDC_params: ', VDC_params)
+            print('VIC_params: ', VIC_params)
             
             self.optimizer_gcn = None
         elif args.model_name in ['td_bert_with_gcn', 'bert_fc_gcn']:
@@ -421,11 +410,11 @@ class Instructor:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
-                elif task_name == 'laptop' and self.max_test_acc_INC < 0.70:
+                elif task_name == 'laptop' and self.max_test_acc_INC < 0.60:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
-                elif task_name == 'restaurant' and self.max_test_acc_INC < 0.75:
+                elif task_name == 'restaurant' and self.max_test_acc_INC < 0.7:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
@@ -468,7 +457,7 @@ class Instructor:
                 elif self.opt.model_name in ['roberta_gcls_td', 'roberta_asc_td']:
                     input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
                     input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
-                elif self.opt.model_name in ['roberta_gcls', 'roberta_td']:
+                elif self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                     train_VDC_info = self.train_VDC_info[all_input_guids]
@@ -487,8 +476,7 @@ class Instructor:
                     train_lcf_matrix = train_lcf_matrix.to(self.opt.device)
                 
                 if self.global_step % 100 == 0:
-                    if self.opt.model_name in ['gcls', 'gcls_moe', 'roberta_gcls',
-                                              'roberta_td']:
+                    if self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
                         print('guid: ', all_input_guids[0])
@@ -506,94 +494,39 @@ class Instructor:
 #                         x = (train_extended_attention_mask[8][0][0][1] == 0).nonzero(as_tuple=True)[0]
 #                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
-                        
-                    elif self.opt.model_name in ['roberta_gcls_2']:
-                        print('-'*77)
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
-                        print('segment_ids: ', segment_ids[0][:50])
-                        print('input_mask: ', input_mask[0][:50])
-                        print('guid: ', all_input_guids[0])
-                        print('gcls_attention_mask.size(): ' ,gcls_attention_mask.size())
-                        print('gcls_attention_mask[0][0]: ', gcls_attention_mask[0][0])
-                        print('gcls_attention_mask_2[0][0]: ', gcls_attention_mask_2[0][0])
-                        print('-'*77)
-                        print('gcls_attention_mask[0][1]: ', gcls_attention_mask[0][1])
-                        print('gcls_attention_mask_2[0][1]: ', gcls_attention_mask_2[0][1])
-                        print('-'*77)
-                        print('gcls_attention_mask[0][2]: ', gcls_attention_mask[0][2])
-                        print('gcls_attention_mask_2[0][2]: ', gcls_attention_mask_2[0][2])
-                        print('-'*77)
-                        
-                    elif self.opt.model_name in ['roberta_lcf', 'roberta_lcf_td']:
-                        print('-'*77)
-                        print('input_ids_lcf_global[0][:50]: ')
-                        print(tokenizer.convert_ids_to_tokens(input_ids_lcf_global[0][:50]))
-                        print('input_ids_lcf_local[0][:50]: ')
-                        print(tokenizer.convert_ids_to_tokens(input_ids_lcf_local[0][:50]))
-                        print('train_lcf_matrix[0]: ', train_lcf_matrix[0])
-                        print('gcls_attention_mask[0][:50]: ', gcls_attention_mask[0][:50])
-                       
-                    elif self.opt.model_name in ['roberta_asc_td']:
-                        print('-'*77)
-                        print('input_ids_lcf_global[0][:50]: ')
-                        print(tokenizer.convert_ids_to_tokens(input_ids_lcf_global[0][:50]))
-                        print('input_ids_lcf_local[0][:50]: ')
-                        print(tokenizer.convert_ids_to_tokens(input_ids_lcf_local[0][:50]))
-                      
                     elif self.opt.model_name in ['roberta']:
                         print('-'*77)
                         print('input_ids[0][:50]: ')
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
                         print('label_ids[0]: ', label_ids[0])
                         
-                    elif self.opt.model_name in ['roberta_gcls_td']:
-                        print('-'*77)
-                        print('input_ids_lcf_global[0][:50]: ')
-                        print(tokenizer.convert_ids_to_tokens(input_ids_lcf_global[0][:50]))
-                        print('input_ids_lcf_local[0][:50]: ')
-                        print(tokenizer.convert_ids_to_tokens(input_ids_lcf_local[0][:50]))
-                        print('gcls_attention_mask[0][:50]: ', gcls_attention_mask[0][:50])
-                
-                
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
-                    loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask, 
-                                              pooler_type = args.g_pooler, VDC_info = train_VDC_info)[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              gcls_attention_mask = gcls_attention_mask, layer_L=train_layer_L, 
-                                              g_config = self.train_g_config, g_token_pos = self.opt.g_token_pos, 
-                                              target_idx = torch.tensor(train_target_idx))[:2]
-                
-                elif self.opt.model_class in [RobertaForSequenceClassification_asc_td]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              gcls_attention_mask = gcls_attention_mask)[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_lcf]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              lcf_matrix = train_lcf_matrix)[:2]
-                
-                elif self.opt.model_class in [RobertaForSequenceClassification_lcf_td]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              lcf_matrix = train_lcf_matrix, gcls_attention_mask = gcls_attention_mask)[:2]
-                    
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
                     loss, logits = self.model(input_ids, labels = label_ids, extended_attention_mask = 
                                               train_extended_attention_mask)[:2]
                     
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
+                    loss, logits = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = train_extended_attention_mask, 
+                                              VDC_info = train_VDC_info, 
+                                              a_pooler = args.a_pooler)[:2]
+                   
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
+                    _, output_ = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = train_extended_attention_mask, 
+                                              VDC_info = train_VDC_info, automation_visualization = False 
+                                              )
+                    loss, logits = output_[:2]
+                
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
                                               train_layer_L)
-                elif self.opt.model_class in [BertForSequenceClassification_gcls_MoE]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              train_layer_L, MoE_layer)
+                    
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -699,7 +632,11 @@ class Instructor:
                             self.last_test_f1 = test_result['eval_f1']
                             self.last_test_epoch = i_epoch
                     else:
-                        result = self.do_eval()
+                        result, validation_increased = self.do_eval()
+                        if self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
+                            if validation_increased == True and self.max_test_acc_INC > 0.5:
+                                self.do_eval(automation_visualization = True)
+                                
                     tr_loss = tr_loss / nb_tr_steps
 #                     self.scheduler.step(result['eval_accuracy'])
 #                     self.scheduler.step()
@@ -730,7 +667,7 @@ class Instructor:
                         print(f" | best_L_config_acc: {self.best_L_config_acc} |")
                         print(f" | best_L_config_f1: {self.best_L_config_f1} |")
                         
-    def do_eval(self, data_type = None):  
+    def do_eval(self, data_type = None, automation_visualization = False):  
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
@@ -745,19 +682,16 @@ class Instructor:
             d_loader = self.dataset.validation_dataloader
         else:
             d_loader = self.dataset.eval_dataloader
+           
+        if automation_visualization == True:
+            vis_vdc = None
+            vis_vic = None
+            
         for batch in tqdm(d_loader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
             input_ids, label_ids, all_input_guids = batch
                 
-                
-            if self.opt.model_name in ['roberta_lcf', 'roberta_lcf_td']:
-                input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
-                input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
-                
-            elif self.opt.model_name in ['roberta_gcls_td', 'roberta_asc_td']:
-                input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
-                input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
-            elif self.opt.model_name in ['roberta_gcls', 'roberta_td']:
+            if self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
                 input_ids = input_ids.to(self.opt.device)
                 if data_type == 'validation':
                     extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
@@ -765,8 +699,10 @@ class Instructor:
                 else:
                     extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
                     eval_VDC_info = self.eval_VDC_info[all_input_guids]
+                    
             elif self.opt.model_name in ['roberta']:
                 input_ids = input_ids.to(self.opt.device)
+                
             else:
                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
@@ -784,32 +720,32 @@ class Instructor:
                 elif self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
-                    loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask, pooler_type = args.g_pooler,
-                                              VDC_info = eval_VDC_info)[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_td]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              gcls_attention_mask=gcls_attention_mask, layer_L=layer_L, 
-                                              g_config = self.train_g_config, g_token_pos = self.opt.g_token_pos,
-                                              target_idx = torch.tensor(eval_target_idx))[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_asc_td]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              gcls_attention_mask = gcls_attention_mask )[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_lcf]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              lcf_matrix = eval_lcf_matrix)[:2]
-                
-                elif self.opt.model_class in [RobertaForSequenceClassification_lcf_td]:
-                    loss, logits = self.model(input_ids_lcf_global, input_ids_lcf_local, labels = label_ids, 
-                                              lcf_matrix = eval_lcf_matrix, gcls_attention_mask = gcls_attention_mask)[:2]
-                    
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
                     loss, logits = self.model(input_ids, labels = label_ids, extended_attention_mask = extended_att_mask)[:2]
-                            
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
+                    loss, logits = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = extended_att_mask,
+                                              VDC_info = eval_VDC_info, a_pooler = args.a_pooler)[:2]
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
+                    vis, output_ = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = extended_att_mask, 
+                                              VDC_info = eval_VDC_info, automation_visualization = automation_visualization 
+                                              )
+                    loss, logits = output_[:2]
+                    
+                    if automation_visualization == True:
+                        if vis_vdc == None:
+                            vis_vdc = vis[0].transpose(0,1)
+                        else:
+                            vis_vdc = torch.cat((vis_vdc, vis[0].transpose(0,1)), dim= 0)
+
+                        if vis_vic == None:
+                            vis_vic = vis[1].transpose(0,1)
+                        else:
+                            vis_vic = torch.cat((vis_vic, vis[1].transpose(0,1)), dim= 0) 
+                                
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -914,7 +850,9 @@ class Instructor:
                     print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
                     print('='*77)
         else:
+            validation_increased = False
             if eval_accuracy > self.max_test_acc_INC:
+                validation_increased = True
                 self.max_test_acc_INC = eval_accuracy
                 if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
@@ -922,6 +860,7 @@ class Instructor:
                     print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
                     print('='*77)
             if test_f1 > self.max_test_f1_INC:
+                validation_increased = True
                 self.max_test_f1_INC = test_f1
                 if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
@@ -942,11 +881,42 @@ class Instructor:
                 result['eval_accuracy_'+str(i+1)] = eval_accuracy_rand[i]
                 result['eval_f1_'+str(i+1)] = eval_accuracy_rand[i]
             
-        if data_type == 'validation':
-            return result, validation_increased
-        else:
-            return result
-
+        
+        if automation_visualization == True:
+            assert vis_vic.size(0) == len(self.dataset.eval_examples) # vis_vic.size():  torch.Size([1120, 12, 12, 4])
+            assert vis_vdc.size(0) == len(self.dataset.eval_examples) # vis_vdc.size():  torch.Size([1120, 12, 12, 7])
+            
+            if args.head_wise == True:
+                print('='*77)
+                print('1. Layer-wise results')
+                print('1.1 VIC_results: ')
+                for jj in range(12):
+                    result = torch.mean(torch.mean(vis_vic[:, jj, :, :], dim= 0), dim = 0).tolist()
+                    result_ = [round(n, 2) for n in result]
+                    print(f'layer {jj}: ', result_ )
+                print('1.2 VDC_results: ')
+                for jj in range(12):
+                    result = torch.mean(torch.mean(vis_vdc[:, jj, :, :], dim= 0), dim = 0).tolist()
+                    result_ = [round(n,2) for n in result]
+                    print(f'layer {jj}: ', result_)
+                    
+            else:
+                print('='*77)
+                print('1. Layer-wise results')
+                print('1.1 VIC_results: ')
+                for jj in range(12):
+                    result = torch.mean(vis_vic[:, jj, :], dim= 0).tolist()
+                    result_ = [round(n, 2) for n in result]
+                    print(f'layer {jj}: ', result_)
+                print('1.2 VDC_results: ')
+                for jj in range(12):
+                    result = torch.mean(vis_vdc[:, jj, :], dim= 0).tolist()
+                    result_ = [round(n, 2) for n in result]
+                    print(f'layer {jj}: ', result_)
+                
+            
+        return result, validation_increased
+        
 
     def do_predict(self):
         # 加载保存的模型进行预测，获得准确率
@@ -1024,12 +994,9 @@ if __name__ == "__main__":
         'cnn': CNN,
         'fc': BertForSequenceClassification,
         'roberta': RobertaForSequenceClassification,
-        'roberta_gcls': RobertaForSequenceClassification_gcls,
-        'roberta_gcls_td': RobertaForSequenceClassification_gcls_td,
-        'roberta_asc_td': RobertaForSequenceClassification_asc_td,
-        'roberta_lcf': RobertaForSequenceClassification_lcf,
-        'roberta_lcf_td': RobertaForSequenceClassification_lcf_td,
         'roberta_td': RobertaForSequenceClassification_TD,
+        'roberta_gcls': RobertaForSequenceClassification_gcls,
+        'roberta_gcls_auto': RobertaForSequenceClassification_gcls_auto,
         'clstm': CLSTM,
         'pf_cnn': PF_CNN,
         'tcn': TCN,
