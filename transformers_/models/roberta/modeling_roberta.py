@@ -203,6 +203,7 @@ class RobertaSelfAttention(nn.Module):
         VIC_gate = None,
         VDC_gate = None,
         VDC_info = None,
+        head_wise = None,
     ) -> Tuple[torch.Tensor]:
         mixed_query_layer = self.query(hidden_states)
 
@@ -264,55 +265,38 @@ class RobertaSelfAttention(nn.Module):
         
         # Head-wise learning
         if VIC_gate != None:
-#             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + gate.log().view(-1,2,2).unsqueeze(1)
-#             attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + VIC_gate.log().view(-1,12,2,2)
-            
-            attention_scores[:,:,:2,:2] = attention_scores[:,:,:2,:2] + VIC_gate.log().view(-1,2,2).unsqueeze(1)
-#             attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,12,2,2)
+            if head_wise == True:
+                attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,12,2,2)
+            else:
+                attention_scores[:,:,:2,:2] +=VIC_gate.log().view(-1,2,2).unsqueeze(1)
             
         if VDC_gate != None:
-#             VDC_info = VDC_info.long().unsqueeze(1).repeat(1,12,1)
-#             VDC_gate = nn.functional.softmax(VDC_gate.reshape(-1, 12, 7), dim = -1)
-# #             y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
-#             y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1).unsqueeze(2), torch.arange(12).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
-            
-# #             assert (y == y2).all()
-            
-#             attention_scores[:,:,1,2:] += y[:,:,2:].log()
-            
-            #########################
-            # if not headwise
-            VDC_info = VDC_info.long()
-            VDC_gate = nn.functional.softmax(VDC_gate, dim = -1)
-#             y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
-            y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
-            
-#             assert (y == y2).all()
-            
-            attention_scores[:,:,1,2:] += y[:, 2:].unsqueeze(1).log()
-            #########################
+            assert attention_mask == None
+            if head_wise == True:
+                VDC_info = VDC_info.long().unsqueeze(1).repeat(1,12,1)
+                VDC_gate = nn.functional.softmax(VDC_gate.reshape(VDC_info.size(0), 12, -1), dim = -1)
+                #y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
+                y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1).unsqueeze(2), torch.arange(12).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
+                #assert (y == y2).all()
 
+                attention_scores[:,:,1,2:] += y[:,:,2:].log()
             
+            else:
+                VDC_info = VDC_info.long()
+                VDC_gate = nn.functional.softmax(VDC_gate, dim = -1)
+                # y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
+                y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
+                #assert (y == y2).all()
+
+                attention_scores[:,:,1,2:] += y[:, 2:].unsqueeze(1).log()
+
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         
         # attention_scores.size() = torch.tensor([32,12,128,128])
         
         if attention_mask is not None:
-            # Apply the attention mask is (precomputed for all layers in RobertaModel forward() function)
-            # attention_mask.size() = torch.tensor([32,1,128,128])
-#             if gcls_update == True:
-#                 gcls_attention_prob = nn.functional.softmax(attention_scores[torch.tensor([i for i in range(attention_mask.size(0))]),:,target_idx,:], dim=-1)    # torch.tensor([B, 12, 128])
-#                 att_for_update = torch.mean(gcls_attention_prob, dim = 1)    # torch.tensor([B, 128])
-#                 above_threshold = torch.where(att_for_update >= 0.5)
-#                 below_threshold = torch.where(att_for_update < 0.1)
-                
-#                 attention_mask[above_threshold[0], 0, 1, above_threshold[1]] = -0.0
-#                 attention_mask[below_threshold[0], 0, 1, below_threshold[1]] = -10000.0
-                
             attention_scores = attention_scores + attention_mask
-                
-            
-            
+        
         # Normalize the attention scores to probabilities.
         
         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
@@ -394,6 +378,7 @@ class RobertaAttention(nn.Module):
         VIC_gate = None,
         VDC_gate = None,
         VDC_info = None,
+        head_wise = None,
     ) -> Tuple[torch.Tensor]:
         self_outputs = self.self(
             hidden_states,
@@ -409,6 +394,7 @@ class RobertaAttention(nn.Module):
             VIC_gate = VIC_gate,
             VDC_gate = VDC_gate,
             VDC_info = VDC_info,
+            head_wise = head_wise,
         )
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
@@ -539,9 +525,8 @@ class RobertaLayer(nn.Module):
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
-# Copied from transformers.models.bert.modeling_bert.BertLayer with Bert->Roberta
 class RobertaLayer_auto(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
@@ -555,199 +540,194 @@ class RobertaLayer_auto(nn.Module):
         self.intermediate = RobertaIntermediate(config)
         self.output = RobertaOutput(config)
         
-        self.VIC_auto = True
-        self.VIC_gate_1 = nn.Linear(3*768, 768)
-        self.VIC_gate_2 = nn.Linear(768, 48)
-#         self.VIC_gate_3 = nn.Linear(128, 48)
+        self.VDC_auto = VDC_auto
+        self.VIC_auto = VIC_auto
+        self.num_auto_layers = num_auto_layers
+        self.head_wise = head_wise
+        self.a_pooler = a_pooler
         
-        self.sigmoid = nn.Sigmoid()
-        self.tanh = nn.Tanh()
-
-        self.VIC_gate_1.weight.data.normal_(mean=0.0, std=config.initializer_range)
-        if self.VIC_gate_1.bias is not None:
-            self.VIC_gate_1.bias.data.zero_()
+        self.VDC_gate, self.VDC_gate_2, self.VIC_gate, self.VIC_gate_2 = None, None, None, None
+        
+        if num_auto_layers == 0:
+            if VDC_auto == True:
+                if head_wise == True:
+                    self.VDC_gate = nn.Parameter(torch.FloatTensor(12*(auto_VDC_k+2)))
+                else:
+                    self.VDC_gate = nn.Parameter(torch.FloatTensor(auto_VDC_k+2))
             
-        self.VIC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-        if self.VIC_gate_2.bias is not None:
-            self.VIC_gate_2.bias.data.zero_()
-            
-#         self.VIC_gate_3.weight.data.normal_(mean=0.0, std=config.initializer_range)
-#         if self.VIC_gate_3.bias is not None:
-#             self.VIC_gate_3.bias.data.zero_()
-            
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        output_attentions: Optional[bool] = False,
-        target_idx = None,
-        gcls_update = False,
-        g_config = None,
-    ) -> Tuple[torch.Tensor]:
-        # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
-        
-        ## Automating VIC
-        gate = None
-        # 1. max 
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = torch.max(first_second_token_tensor, dim=1)[0]
-#         gate = self.VIC_gate_1(cat)
-#         gate = self.tanh(gate)
-#         gate = self.VIC_gate_2(gate)
-#         gate = self.sigmoid(gate)
-
-        # 2. avg
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = first_second_token_tensor.mean(dim = 1)
-#         gate = self.VIC_gate_1(cat)
-# #         gate = self.tanh(gate)
-# #         gate = self.VIC_gate_2(cat)
-#         gate = self.sigmoid(gate)
-
-        # 3. Att
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = torch.mean(first_second_token_tensor, dim=1)
-#         gate_ = self.VIC_gate_1(cat)
-
-#         gate_ = self.tanh(gate_)
-
-#         attention_scores = torch.matmul(gate_.unsqueeze(1), first_second_token_tensor.transpose(1,2))
-#         attention_scores = attention_scores.view(-1,2)
-#         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-#         final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-
-#         gate = self.VIC_gate_2(final_output)
-#         gate = self.sigmoid(gate)
-
-        # 4. Concatenate
-#         VIC_gate = self.VIC_gate_1(hidden_states[:, :2].view(-1, 2*768))
-#         VIC_gate = self.tanh(VIC_gate)
-#         VIC_gate = self.VIC_gate_2(VIC_gate)
-#         VIC_gate = self.sigmoid(VIC_gate)
-        
-        # 5. x,y,x*y
-        input_tensor = torch.cat((hidden_states[:,:2].view(-1,2*768), hidden_states[:,0]*hidden_states[:,1]), dim= -1).view(-1, 3*768)
-        VIC_gate = self.VIC_gate_1(input_tensor)
-        VIC_gate = self.tanh(VIC_gate)
-        VIC_gate = self.VIC_gate_2(VIC_gate)
-        VIC_gate = self.sigmoid(VIC_gate)
-        
-        self_attention_outputs = self.attention(
-            hidden_states,
-            attention_mask,
-            head_mask,
-            output_attentions=output_attentions,
-            past_key_value=self_attn_past_key_value,
-            target_idx = target_idx,
-            gcls_update = gcls_update,
-            g_config = g_config,
-            VIC_gate = VIC_gate,
-        )
-        attention_output = self_attention_outputs[0]
-
-        # if decoder, the last output is tuple of self-attn cache
-        if self.is_decoder:
-            outputs = self_attention_outputs[1:-1]
-            present_key_value = self_attention_outputs[-1]
+            if VIC_auto == True:
+                if head_wise == True:
+                    self.VIC_gate = nn.Parameter(torch.FloatTensor(12*4))
+                else:
+                    self.VIC_gate = nn.Parameter(torch.FloatTensor(4))
+                    
         else:
-            outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
-
-        cross_attn_present_key_value = None
-        if self.is_decoder and encoder_hidden_states is not None:
-            if not hasattr(self, "crossattention"):
-                raise ValueError(
-                    f"If `encoder_hidden_states` are passed, {self} has to be instantiated with cross-attention layers"
-                    " by setting `config.add_cross_attention=True`"
-                )
-
-            # cross_attn cached key/values tuple is at positions 3,4 of past_key_value tuple
-            cross_attn_past_key_value = past_key_value[-2:] if past_key_value is not None else None
-            cross_attention_outputs = self.crossattention(
-                attention_output,
-                attention_mask,
-                head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                cross_attn_past_key_value,
-                output_attentions,
-            )
-            attention_output = cross_attention_outputs[0]
-            outputs = outputs + cross_attention_outputs[1:-1]  # add cross attentions if we output attention weights
-
-            # add cross-attn cache to positions 3,4 of present_key_value tuple
-            cross_attn_present_key_value = cross_attention_outputs[-1]
-            present_key_value = present_key_value + cross_attn_present_key_value
-
-        layer_output = apply_chunking_to_forward(
-            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
-        )
-        outputs = (layer_output,) + outputs
-
-        # if decoder, return the attn key/values as the last output
-        if self.is_decoder:
-            outputs = outputs + (present_key_value,)
-
-        return outputs
-
-    def feed_forward_chunk(self, attention_output):
-        intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
-        return layer_output
-    
-
-class RobertaLayer_VDC_VIC_auto(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.chunk_size_feed_forward = config.chunk_size_feed_forward
-        self.seq_len_dim = 1
-        self.attention = RobertaAttention(config)
-        self.is_decoder = config.is_decoder
-        self.add_cross_attention = config.add_cross_attention
-        if self.add_cross_attention:
-            if not self.is_decoder:
-                raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
-            self.crossattention = RobertaAttention(config, position_embedding_type="absolute")
-        self.intermediate = RobertaIntermediate(config)
-        self.output = RobertaOutput(config)
+            if VDC_auto == True:
+                if head_wise == True:
+                    if a_pooler in ['t_max_concat', 't_avg_concat']:
+                        if num_auto_layers == 1:
+                            self.VDC_gate = nn.Linear(3*768, 12*(auto_VDC_k+2))
+                        elif num_auto_layers == 2:
+                            self.VDC_gate = nn.Linear(3*768, 768)
+                            self.VDC_gate_2 = nn.Linear(768, 12*(auto_VDC_k+2))
+                            
+                    elif a_pooler in ['s_g_concat']:
+                        if num_auto_layers == 1:
+                            self.VDC_gate = nn.Linear(2*768, 12*(auto_VDC_k+2))
+                        elif num_auto_layers == 2:
+                            self.VDC_gate = nn.Linear(2*768, 768)
+                            self.VDC_gate_2 = nn.Linear(768, 12*(auto_VDC_k+2))
+                            
+                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all']:
+                        if num_auto_layers == 1:
+                            self.VDC_gate = nn.Linear(768, 12*(auto_VDC_k+2))
+                        elif num_auto_layers == 2:
+                            self.VDC_gate = nn.Linear(768, 768)
+                            self.VDC_gate_2 = nn.Linear(768, 12*(auto_VDC_k+2))
+                else:
+                    if a_pooler in ['t_max_concat', 't_avg_concat']:
+                        if num_auto_layers == 1:
+                            self.VDC_gate = nn.Linear(3*768, auto_VDC_k+2)
+                        elif num_auto_layers == 2:
+                            self.VDC_gate = nn.Linear(3*768, 768)
+                            self.VDC_gate_2 = nn.Linear(768, auto_VDC_k+2)
+                            
+                    elif a_pooler in ['s_g_concat']:
+                        if num_auto_layers == 1:
+                            self.VDC_gate = nn.Linear(2*768, auto_VDC_k+2)
+                        elif num_auto_layers == 2:
+                            self.VDC_gate = nn.Linear(2*768, 768)
+                            self.VDC_gate_2 = nn.Linear(768, auto_VDC_k+2)
+                            
+                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all']:
+                        if num_auto_layers == 1:
+                            self.VDC_gate = nn.Linear(768, auto_VDC_k+2)
+                        elif num_auto_layers == 2:
+                            self.VDC_gate = nn.Linear(768, 768)
+                            self.VDC_gate = nn.Linear(768, auto_VDC_k+2)
+                        
+            if VIC_auto == True:
+                if head_wise == True:
+                    if a_pooler in ['t_max_concat', 't_avg_concat']:
+                        if num_auto_layers == 1:
+                            self.VIC_gate = nn.Linear(3*768, 12*4)
+                        elif num_auto_layers == 2:
+                            self.VIC_gate = nn.Linear(3*768, 768)
+                            self.VIC_gate_2 = nn.Linear(768, 12*4)
+                            
+                    elif a_pooler in ['s_g_concat']:
+                        if num_auto_layers == 1:
+                            self.VIC_gate = nn.Linear(2*768, 12*4)
+                        elif num_auto_layers == 2:
+                            self.VIC_gate = nn.Linear(2*768, 768)
+                            self.VIC_gate_2 = nn.Linear(768, 12*4)
+                            
+                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all']:
+                        if num_auto_layers == 1:
+                            self.VIC_gate = nn.Linear(768, 12*4)
+                        elif num_auto_layers == 2:
+                            self.VIC_gate = nn.Linear(768, 768)
+                            self.VIC_gate_2 = nn.Linear(768, 12*4)
+                else:
+                    if a_pooler in ['t_max_concat', 't_avg_concat']:
+                        if num_auto_layers == 1:
+                            self.VIC_gate = nn.Linear(3*768, 4)
+                        elif num_auto_layers == 2:
+                            self.VIC_gate = nn.Linear(3*768, 768)
+                            self.VIC_gate_2 = nn.Linear(768, 4)
+                            
+                    elif a_pooler in ['s_g_concat']:
+                        if num_auto_layers == 1:
+                            self.VIC_gate = nn.Linear(2*768, 4)
+                        elif num_auto_layers == 2:
+                            self.VIC_gate = nn.Linear(2*768, 768)
+                            self.VIC_gate_2 = nn.Linear(768, 4)
+                            
+                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all']:
+                        if num_auto_layers == 1:
+                            self.VIC_gate = nn.Linear(768, 4)
+                        elif num_auto_layers == 2:
+                            self.VIC_gate = nn.Linear(768, 768)
+                            self.VIC_gate_2 = nn.Linear(768, 4)
+            
+        print('='*77)
+        print('Automation info: ')
+        print('-'*77)
+        print('VDC_auto: ', self.VDC_auto)
+        print('VIC_auto: ', self.VIC_auto)
+        print('head_wise: ', self.head_wise)
+        print('num_auto_layers: ', self.num_auto_layers)
+        print('auto_VDC_k: ', auto_VDC_k)
+        print('a_pooler: ', self.a_pooler)
+        print('-'*77)
         
-        self.VIC_auto = True
-        self.VIC_gate_1 = nn.Linear(768, 48)
-#         self.VIC_gate_1 = nn.Linear(3*768, 4)
-        
-#         self.VIC_gate_2 = nn.Linear(768, 48)
-#         self.VIC_gate_3 = nn.Linear(128, 48)
-        
-        self.VDC_auto = True
-        self.VDC_gate_1 = nn.Linear(768, 12*7)
-#         self.VDC_gate_1 = nn.Linear(3*768, 7)
-        
-#         self.VDC_gate_2 = nn.Linear(768, 12*7)
-        
+        if self.num_auto_layers >=1 :
+            if self.VDC_gate != None:
+                print('self.VDC_gate.weight.size(): ', self.VDC_gate.weight.size())
+            else:
+                print('self.VDC_gate: ', self.VDC_gate)
+
+            if self.VDC_gate_2 != None:
+                print('self.VDC_gate_2.weight.size(): ', self.VDC_gate_2.weight.size())
+            else:
+                print('self.VDC_gate_2: ', self.VDC_gate_2)
+
+            if self.VIC_gate != None:
+                print('self.VIC_gate.weight.size(): ', self.VIC_gate.weight.size())
+            else:
+                print('self.VIC_gate: ', self.VIC_gate)
+
+            if self.VIC_gate_2 != None:
+                print('self.VIC_gate_2.weight.size(): ', self.VIC_gate_2.weight.size())
+            else:
+                print('self.VIC_gate_2: ', self.VIC_gate_2)
+            print('-'*77)
+            
+        else:
+            if self.VDC_gate != None:
+                print('self.VDC_gate.data.size(): ', self.VDC_gate.data.size())
+            else:
+                print('self.VDC_gate: ', self.VDC_gate)
+
+            if self.VIC_gate != None:
+                print('self.VIC_gate.data.size(): ', self.VIC_gate.data.size())
+            else:
+                print('self.VIC_gate: ', self.VIC_gate)
+
+            print('-'*77)
         
         self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-        self.VIC_gate_1.weight.data.normal_(mean=0.0, std=config.initializer_range)
-        if self.VIC_gate_1.bias is not None:
-            self.VIC_gate_1.bias.data.zero_()
-            
-#         self.VIC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-#         if self.VIC_gate_2.bias is not None:
-#             self.VIC_gate_2.bias.data.zero_()
-            
-        self.VDC_gate_1.weight.data.normal_(mean=0.0, std=config.initializer_range)
-        if self.VDC_gate_1.bias is not None:
-            self.VDC_gate_1.bias.data.zero_()
-            
-#         self.VDC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-#         if self.VDC_gate_2.bias is not None:
-#             self.VDC_gate_2.bias.data.zero_()
+        
+        if num_auto_layers == 1:
+            if VDC_auto == True:
+                self.VDC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
+                if self.VDC_gate.bias is not None:
+                    self.VDC_gate.bias.data.zero_()
+            if VIC_auto == True:
+                self.VIC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
+                if self.VIC_gate.bias is not None:
+                    self.VIC_gate.bias.data.zero_()
+                    
+        elif num_auto_layers == 2:
+            if VDC_auto == True:
+                self.VDC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
+                if self.VDC_gate.bias is not None:
+                    self.VDC_gate.bias.data.zero_()
+                    
+                self.VDC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
+                if self.VDC_gate_2.bias is not None:
+                    self.VDC_gate_2.bias.data.zero_()
+                    
+            if VIC_auto == True:
+                self.VIC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
+                if self.VIC_gate.bias is not None:
+                    self.VIC_gate.bias.data.zero_()
+                    
+                self.VIC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
+                if self.VIC_gate_2.bias is not None:
+                    self.VIC_gate_2.bias.data.zero_()
             
     def forward(
         self,
@@ -762,7 +742,7 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
         gcls_update = False,
         g_config = None,
         VDC_info = None,
-        a_pooler = None,
+        automation_visualization = None,
     ) -> Tuple[torch.Tensor]:
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -771,21 +751,20 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
         mask = (VDC_info == 1).long().unsqueeze(2)
         
         #################################
-        if a_pooler == 't_avg_only':
+        if self.a_pooler == 't_avg_only':
             pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
             V_input = self.dropout(pooled)
-            # 한국어: 이거 dense 넓이 맞춰야할 거 같은데 -> 일단 수동으로.
-        elif a_pooler == 't_avg_all':
+        elif self.a_pooler == 't_avg_all':
             mask[:, :2] = 1 # Allows considering s and g
             pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
             V_input = self.dropout(pooled)
-        elif a_pooler == 't_max_only':
+        elif self.a_pooler == 't_max_only':
             index_2 = (VDC_info != 1).long()*-float('inf')
             index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
             mask_2 = index_2.unsqueeze(2)
             pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
             V_input = self.dropout(pooled)
-        elif a_pooler == 't_max_all':
+        elif self.a_pooler == 't_max_all':
             mask[:, :2] = 1 # Allows considering s and g
             index_2 = (VDC_info != 1).long()*-float('inf')
             index_2[:,:2] = 0 # Allows considering s and g
@@ -793,38 +772,46 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
             mask_2 = index_2.unsqueeze(2)
             pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
             V_input = self.dropout(pooled)
-        elif a_pooler == 't_avg_concat':
+        elif self.a_pooler == 't_avg_concat':
             pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
             concat_vector = torch.cat((hidden_states[:,:2], pooled.unsqueeze(1)), dim = 1).reshape(-1, 3*768)
-            V_input = self.dropout(pooled)
-        elif a_pooler == 't_max_concat':
+            V_input = self.dropout(concat_vector)
+        elif self.a_pooler == 't_max_concat':
             index_2 = (VDC_info != 1).long()*-float('inf')
             index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
             mask_2 = index_2.unsqueeze(2)
             pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
             concat_vector = torch.cat((hidden_states[:,:2], pooled.unsqueeze(1)), dim = 1).reshape(-1, 3*768)
-            V_input = self.dropout(pooled)
+            V_input = self.dropout(concat_vector)
+            
+        elif self.a_pooler == 's_g_concat':
+            V_input = hidden_states[:, :2].view(-1, 2*768)
         #################################
         
+        if self.num_auto_layers == 0:
+            VIC_gate = self.VIC_gate
+            VIC_gate = self.sigmoid(VIC_gate)
+            
+            VDC_gate = self.VDC_gate
+            
+        elif self.num_auto_layers == 1:
+            VIC_gate = self.VIC_gate(V_input)
+            VIC_gate = self.sigmoid(VIC_gate)
+            
+            VDC_gate = self.VDC_gate(V_input)
         
-        
-        VIC_gate = self.VIC_gate_1(V_input)
-#         VIC_gate = self.tanh(VIC_gate)
-#         VIC_gate = self.VIC_gate_2(VIC_gate)
-        VIC_gate = self.sigmoid(VIC_gate)
-        
-        VDC_gate = self.VDC_gate_1(V_input)
-#         VDC_gate = self.tanh(VDC_gate)
-#         VDC_gate = self.VDC_gate_2(VDC_gate)
-        
+        elif self.num_auto_layers == 2:
+            VIC_gate = self.VIC_gate(V_input)
+            VIC_gate = self.tanh(VIC_gate)
+            VIC_gate = self.VIC_gate_2(VIC_gate)
+            VIC_gate = self.sigmoid(VIC_gate)
+            
+            VDC_gate = self.VDC_gate(V_input)
+            VDC_gate = self.tanh(VDC_gate)
+            VDC_gate = self.VDC_gate_2(VDC_gate)
+            
         # 사실 위에 두 개 합치는게 낫긴 함
         
-        # 5. x,y,x*y
-#         input_tensor = torch.cat((hidden_states[:,:2].view(-1,2*768), hidden_states[:,0]*hidden_states[:,1]), dim= -1).view(-1, 3*768)
-#         gate = self.VIC_gate_1(input_tensor)
-# #         gate = self.tanh(gate)
-# #         gate = self.VIC_gate_2(gate)
-#         gate = self.sigmoid(gate)
         
         self_attention_outputs = self.attention(
             hidden_states,
@@ -838,6 +825,7 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
             VIC_gate = VIC_gate,
             VDC_gate = VDC_gate,
             VDC_info = VDC_info,
+            head_wise = self.head_wise,
         )
         attention_output = self_attention_outputs[0]
 
@@ -882,8 +870,19 @@ class RobertaLayer_VDC_VIC_auto(nn.Module):
         # if decoder, return the attn key/values as the last output
         if self.is_decoder:
             outputs = outputs + (present_key_value,)
-
-        return outputs
+        
+        if automation_visualization == True:
+            if self.head_wise == True:
+                vis_vdc = nn.functional.softmax(VDC_gate.clone().reshape(VDC_info.size(0), 12, -1), dim = -1)
+                vis_vic = VIC_gate.clone().reshape(VDC_info.size(0), 12, 4)
+            else:
+                vis_vdc = nn.functional.softmax(VDC_gate.clone(), dim = -1)
+                vis_vic = VIC_gate.clone()
+                
+            return outputs, (vis_vdc, vis_vic)
+        
+        else:
+            return outputs, None
 
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
@@ -1092,115 +1091,16 @@ class RobertaEncoder_gcls(nn.Module):
         )
     
 class RobertaEncoder_gcls_auto(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([RobertaLayer_auto(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([RobertaLayer_auto(config, VDC_auto = VDC_auto, VIC_auto = VIC_auto, 
+                                                      num_auto_layers = num_auto_layers, head_wise = head_wise,
+                                                      auto_VDC_k = auto_VDC_k, a_pooler = a_pooler) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-
-        next_decoder_cache = () if use_cache else None
-        for i, layer_module in enumerate(self.layer):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-            past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if self.gradient_checkpointing and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                    )
-                    use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
-            else:
-                att_mask = attention_mask[i].clone()
-                
-                if i > 700000 :
-                    gcls_update = True
-                else:
-                    gcls_update = False
-                layer_outputs = layer_module(
-                    hidden_states,
-                    att_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    past_key_value,
-                    output_attentions,
-                    gcls_update = gcls_update,
-                )
-
-            hidden_states = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache += (layer_outputs[-1],)
-            if output_attentions:
-                all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
-    
-class RobertaEncoder_gcls_VDC_VIC_auto(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.layer = nn.ModuleList([RobertaLayer_VDC_VIC_auto(config) for _ in range(config.num_hidden_layers)])
-        self.gradient_checkpointing = False
-
+        
+        self.VDC_auto = VDC_auto
+        
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1214,13 +1114,16 @@ class RobertaEncoder_gcls_VDC_VIC_auto(nn.Module):
         output_hidden_states: Optional[bool] = False,
         return_dict: Optional[bool] = True,
         VDC_info = None,
-        a_pooler = None,
+        automation_visualization = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
 
         next_decoder_cache = () if use_cache else None
+        
+        auto_VDC_results = None
+        auto_VIC_results = None
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -1251,13 +1154,16 @@ class RobertaEncoder_gcls_VDC_VIC_auto(nn.Module):
                     encoder_attention_mask,
                 )
             else:
-                att_mask = attention_mask[i].clone()
+                if self.VDC_auto == False:
+                    att_mask = attention_mask[i].clone()
+                else:
+                    att_mask = None
                 
                 if i > 700000 :
                     gcls_update = True
                 else:
                     gcls_update = False
-                layer_outputs = layer_module(
+                layer_outputs, visualization_results = layer_module(
                     hidden_states,
                     att_mask,
                     layer_head_mask,
@@ -1267,116 +1173,17 @@ class RobertaEncoder_gcls_VDC_VIC_auto(nn.Module):
                     output_attentions,
                     gcls_update = gcls_update,
                     VDC_info = VDC_info,
-                    a_pooler = a_pooler,
+                    automation_visualization = automation_visualization,
                 )
-
-            hidden_states = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache += (layer_outputs[-1],)
-            if output_attentions:
-                all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
-    
-class RobertaEncoder_gcls_rpt(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(4*config.num_hidden_layers)])
-        self.gradient_checkpointing = False
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-        VDC = None,
-        VDC_2 = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-
-        next_decoder_cache = () if use_cache else None
-        
-        for i in range(12):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-            past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if self.gradient_checkpointing and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                    )
-                    use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
-            else:
-                att_mask = attention_mask[VDC_2[i]].clone()
                 
-                if i > 700000 :
-                    gcls_update = True
+            if automation_visualization:
+                if i == 0:
+                    auto_VDC_results = visualization_results[0].unsqueeze(0)
+                    auto_VIC_results = visualization_results[1].unsqueeze(0)
                 else:
-                    gcls_update = False
-                    
-                layer_outputs = self.layer[12*VDC[i]+i](
-                    hidden_states,
-                    att_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    past_key_value,
-                    output_attentions,
-                    gcls_update = gcls_update,
-                )
-
+                    auto_VDC_results = torch.cat((auto_VDC_results, visualization_results[0].unsqueeze(0)), dim = 0)
+                    auto_VIC_results = torch.cat((auto_VIC_results, visualization_results[1].unsqueeze(0)), dim = 0)
+            
             hidden_states = layer_outputs[0]
             if use_cache:
                 next_decoder_cache += (layer_outputs[-1],)
@@ -1400,317 +1207,15 @@ class RobertaEncoder_gcls_rpt(nn.Module):
                 ]
                 if v is not None
             )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
-    
-class RobertaEncoder_gcls_2(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.num_hidden_layers)])
-        self.gradient_checkpointing = False
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-        layer_L = None,
-        layer_L_2 = None,
-        g_config = None,
-        g_token_pos = None,
-        target_idx = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-
-        next_decoder_cache = () if use_cache else None
-        for i, layer_module in enumerate(self.layer):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-            past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if self.gradient_checkpointing and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                    )
-                    use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
-            else:
-                att_mask = attention_mask[i].clone()
-                
-                att_mask[:,0,0,0] = (1-g_config[i][0][0]) * -10000.0
-                att_mask[:,0,0,1] = (1-g_config[i][0][1]) * -10000.0
-                att_mask[:,0,0,2] = (1-g_config[i][0][2]) * -10000.0
-                
-                att_mask[:,0,1,0] = (1-g_config[i][1][0]) * -10000.0
-                att_mask[:,0,1,1] = (1-g_config[i][1][1]) * -10000.0
-                att_mask[:,0,1,2] = (1-g_config[i][1][2]) * -10000.0
-                
-                att_mask[:,0,2,0] = (1-g_config[i][2][0]) * -10000.0
-                att_mask[:,0,2,1] = (1-g_config[i][2][1]) * -10000.0
-                att_mask[:,0,2,2] = (1-g_config[i][2][2]) * -10000.0
-                
-                gcls_update = False
-                
-                layer_outputs = layer_module(
-                    hidden_states,
-                    att_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    past_key_value,
-                    output_attentions,
-                    target_idx = target_idx,
-                    gcls_update = gcls_update,
-                )
-
-            hidden_states = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache += (layer_outputs[-1],)
-            if output_attentions:
-                all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
-
-class RobertaEncoder_gcls_er(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.num_hidden_layers)])
-        self.gradient_checkpointing = False
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-        layer_L = None,
-        g_config = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-
-        next_decoder_cache = () if use_cache else None
-        for k in range(2):
-            for i, layer_module in enumerate(self.layer):
-                if output_hidden_states:
-                    all_hidden_states = all_hidden_states + (hidden_states,)
-
-                layer_head_mask = head_mask[i] if head_mask is not None else None
-                past_key_value = past_key_values[i] if past_key_values is not None else None
-
-                if self.gradient_checkpointing and self.training:
-
-                    if use_cache:
-                        logger.warning(
-                            "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                        )
-                        use_cache = False
-
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            return module(*inputs, past_key_value, output_attentions)
-
-                        return custom_forward
-
-                    layer_outputs = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(layer_module),
-                        hidden_states,
-                        attention_mask,
-                        layer_head_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                    )
-                else:
-                    att_mask = attention_mask[layer_L[i]].clone()
-
-                    att_mask[:,0,0,:2] = (1 - g_config[i][0]) * -10000.0
-                    att_mask[:,0,1,:2] = (1-g_config[i][1]) * -10000.0
-
-                    layer_outputs = layer_module(
-                        hidden_states,
-                        att_mask,
-                        layer_head_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        past_key_value,
-                        output_attentions,
-                    )
-
-                hidden_states = layer_outputs[0]
-                if use_cache:
-                    next_decoder_cache += (layer_outputs[-1],)
-                if output_attentions:
-                    all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                    if self.config.add_cross_attention:
-                        all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
-
-class RobertaEncoder_gcls_moe(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(3*config.num_hidden_layers)])
-        self.gradient_checkpointing = False
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-        layer_L = None,
-        g_config = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-
-        next_decoder_cache = () if use_cache else None
         
-        for i in range(12):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-            
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-            past_key_value = past_key_values[i] if past_key_values is not None else None
-            
-            att_mask = attention_mask[layer_L[i]].clone()
-                
-            att_mask[:,0,0,:2] = (1 - g_config[i][0]) * -10000.0
-            att_mask[:,0,1,:2] = (1-g_config[i][1]) * -10000.0
-            
-            layer_outputs = self.layer[12*layer_L[i]+i](
-                hidden_states,
-                att_mask,
-                layer_head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                past_key_value,
-                output_attentions,
-            )
-
-            hidden_states = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache += (layer_outputs[-1],)
-            if output_attentions:
-                all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-            
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=next_decoder_cache,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
             cross_attentions=all_cross_attentions,
-        )
+        ), (auto_VDC_results, auto_VIC_results)
+    
 
 # Copied from transformers.models.bert.modeling_bert.BertPooler
 class RobertaPooler(nn.Module):
@@ -1780,29 +1285,36 @@ class RobertaPooler_TD(nn.Module):
     
     
 class RobertaPooler_gcls(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, g_pooler):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
-        self.dense_2 = nn.Linear(3*config.hidden_size, config.hidden_size)
-        self.dense_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-        if self.dense_2.bias is not None:
-            self.dense_2.bias.data.zero_()
+        self.g_pooler = g_pooler
+        self.dense_2 = None
+        if g_pooler in ['s_g_t_max_concat', 's_g_t_avg_concat']:
+            self.dense_2 = nn.Linear(3*config.hidden_size, config.hidden_size)
+        elif g_pooler in ['s_g_concat']:
+            self.dense_2 = nn.Linear(2*config.hidden_size, config.hidden_size)
         
-    def forward(self, hidden_states: torch.Tensor, pooler_type = None, extended_attention_mask_pooler=None) -> torch.Tensor:
-        if pooler_type == 'avg':
+        if self.dense_2 != None:
+            self.dense_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
+            if self.dense_2.bias is not None:
+                self.dense_2.bias.data.zero_()
+        
+    def forward(self, hidden_states: torch.Tensor, extended_attention_mask_pooler=None) -> torch.Tensor:
+        if self.g_pooler == 's_g_avg':
             first_second_token_tensor = hidden_states[:, :2]
             cat = torch.mean(first_second_token_tensor, dim = 1)
             pooled_output = self.dense(cat)
             final_output = self.activation(pooled_output)
-        elif pooler_type == 'max':
+        elif self.g_pooler == 's_g_max':
             first_second_token_tensor = hidden_states[:, :2]
             cat = torch.max(first_second_token_tensor, dim=1)[0]
             pooled_output = self.dense(cat)
             final_output = self.activation(pooled_output)
-        elif pooler_type == 'att':
+        elif self.g_pooler == 's_g_att':
             first_second_token_tensor = hidden_states[:, :2]
             cat = torch.mean(first_second_token_tensor, dim=1)
             pooled_output = self.dense(cat)
@@ -1812,16 +1324,49 @@ class RobertaPooler_gcls(nn.Module):
             attention_scores = attention_scores.view(-1,2)
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-        elif pooler_type == 'g':
+        elif self.g_pooler == 's_g_concat':
+            first_second_token_tensor = hidden_states[:, :2].reshape(-1, 2*768)
+            pooled_output = self.dense_2(first_second_token_tensor)
+            final_output = self.activation(pooled_output)
+        elif self.g_pooler == 's_g_t_avg_concat':  # concatanating s, g, and t_avg
+            first_second_token_tensor = hidden_states[:, :2]
+            
+            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = index.long()
+            mask = index.unsqueeze(2)
+            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            final_output = torch.cat((first_second_token_tensor, pooled.unsqueeze(1)), dim = 1).reshape(-1,3*768)
+            final_output = self.dropout(final_output)
+            final_output = self.dense_2(final_output)
+            final_output = self.activation(final_output)
+          
+        elif self.g_pooler == 's_g_t_max_concat':  # concatanating s, g, and t_max
+            first_second_token_tensor = hidden_states[:, :2]
+            
+            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = index.long()
+            index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask = index.unsqueeze(2)
+            mask_2 = index_2.unsqueeze(2)
+            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            
+            final_output = torch.cat((first_second_token_tensor, pooled.unsqueeze(1)), dim = 1).reshape(-1,3*768)
+            final_output = self.dropout(final_output)
+            final_output = self.dense_2(final_output)
+            final_output = self.activation(final_output)
+            
+        elif self.g_pooler == 'g':
             first_token_tensor = hidden_states[:,1]
             pooled_output = self.dense(first_token_tensor)
             final_output = self.activation(pooled_output)
-        elif pooler_type == 's':
+        elif self.g_pooler == 's':
             first_token_tensor = hidden_states[:,0]
             pooled_output = self.dense(first_token_tensor)
             final_output = self.activation(pooled_output)
         
-        elif pooler_type == 't_avg_only':
+        elif self.g_pooler == 't_avg_only':
             index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
             index = index.long()
 
@@ -1830,9 +1375,9 @@ class RobertaPooler_gcls(nn.Module):
             
             pooled = self.dropout(pooled)
             pooled_output = self.dense(pooled)
-            final = self.activation(pooled_output)
+            final_output = self.activation(pooled_output)
             
-        elif pooler_type == 't_avg_all':
+        elif self.g_pooler == 't_avg_all':
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
@@ -1847,7 +1392,7 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense(pooled)
             final = self.activation(pooled_output)
             
-        elif pooler_type == 't_avg_concat':
+        elif self.g_pooler == 't_avg_concat':
             first_second_token_tensor = hidden_states[:, :2]
             
             index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
@@ -1861,7 +1406,7 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense_2(target_in_sent_embed)
             final_output = self.activation(pooled_output)
             
-        elif pooler_type == 't_max_avg':
+        elif self.g_pooler == 't_max_avg':
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
@@ -1879,7 +1424,7 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense(target_in_sent_embed)
             final_output = self.activation(pooled_output)
             
-        elif pooler_type == 't_max_max':
+        elif self.g_pooler == 't_max_max':
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
@@ -1897,7 +1442,7 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense(target_in_sent_embed)
             final_output = self.activation(pooled_output)
             
-        elif pooler_type == 't_max_only':
+        elif self.g_pooler == 't_max_only':
             index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
             index = index.long()
             index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
@@ -1911,7 +1456,7 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense(pooled)
             final_output = self.activation(pooled_output)
             
-        elif pooler_type == 't_max_concat':
+        elif self.g_pooler == 't_max_concat':
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
@@ -1928,7 +1473,7 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense_2(target_in_sent_embed)
             final_output = self.activation(pooled_output)
             
-        elif pooler_type == 't_all_att':
+        elif self.g_pooler == 't_all_att':
             first_second_token_tensor = hidden_states[:, :2]
             target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]).to(hidden_states.device)
             
@@ -2537,7 +2082,6 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
-        pooler_type = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -2653,7 +2197,7 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
             return_dict=return_dict,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, pooler_type = pooler_type, 
+        pooled_output = self.pooler(sequence_output,
                                     extended_attention_mask_pooler =extended_attention_mask) if self.pooler is not None else None
 
         if not return_dict:
@@ -2692,14 +2236,16 @@ class RobertaModel_gcls_auto(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, add_pooling_layer=True):
+    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler, g_pooler, add_pooling_layer=True):
         super().__init__(config)
         self.config = config
 
         self.embeddings = RobertaEmbeddings(config)
-        self.encoder = RobertaEncoder_gcls_auto(config)
+        self.encoder = RobertaEncoder_gcls_auto(config, VDC_auto = VDC_auto, VIC_auto = VIC_auto, 
+                                                num_auto_layers = num_auto_layers, head_wise = head_wise, 
+                                                auto_VDC_k = auto_VDC_k, a_pooler = a_pooler)
         
-        self.pooler = RobertaPooler_gcls(config) if add_pooling_layer else None
+        self.pooler = RobertaPooler_gcls(config, g_pooler) if add_pooling_layer else None
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -2742,215 +2288,8 @@ class RobertaModel_gcls_auto(RobertaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
-        pooler_type = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
-        r"""
-        encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
-            the model is configured as a decoder.
-        encoder_attention_mask (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
-            the cross-attention if the model is configured as a decoder. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-        past_key_values (`tuple(tuple(torch.FloatTensor))` of length `config.n_layers` with each tuple having 4 tensors of shape `(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
-            Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
-
-            If `past_key_values` are used, the user can optionally input only the last `decoder_input_ids` (those that
-            don't have their past key value states given to this model) of shape `(batch_size, 1)` instead of all
-            `decoder_input_ids` of shape `(batch_size, sequence_length)`.
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if self.config.is_decoder:
-            use_cache = use_cache if use_cache is not None else self.config.use_cache
-        else:
-            use_cache = False
-
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-        batch_size, seq_length = input_shape
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-
-        if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
-
-        if token_type_ids is None:
-            if hasattr(self.embeddings, "token_type_ids"):
-                buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
-                token_type_ids = buffered_token_type_ids_expanded
-            else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-
-        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
-        # ourselves in which case we just need to make it broadcastable to all heads.
-#         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
-
-        # If a 2D or 3D attention mask is provided for the cross-attention
-        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-        if self.config.is_decoder and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
-            if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
-        else:
-            encoder_extended_attention_mask = None
-        
-#         original_attention_mask = extended_attention_mask.clone()    # torch.Size([32, 1, 1, 128])
- 
-#         extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
-        
-#         extended_attention_mask_ = {}
-        
-#         for item in layer_L_set:
-#             extended_att_mask = extended_attention_mask.clone()
-#             for i in range(input_ids.size(0)):
-#                 extended_att_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-# #                 extended_att_mask[i,0,0,:2] = torch.tensor([0, -10000.0], dtype =torch.float)
-
-#             extended_attention_mask_[item] = extended_att_mask
-        
-            
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
-        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
-        embedding_output = self.embeddings(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            token_type_ids=token_type_ids,
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
-        )
-        encoder_outputs = self.encoder(
-            embedding_output,
-            attention_mask=extended_attention_mask,
-            head_mask=head_mask,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_extended_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, pooler_type = pooler_type, 
-                                   extended_attention_mask_pooler = extended_attention_mask) if self.pooler is not None else None
-
-        if not return_dict:
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        return BaseModelOutputWithPoolingAndCrossAttentions(
-            last_hidden_state=sequence_output,
-            pooler_output=pooled_output,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        )
-
-
-@add_start_docstrings(
-    """RoBERTa Model with a `language modeling` head on top for CLM fine-tuning.""", ROBERTA_START_DOCSTRING
-)
-
-
-class RobertaModel_gcls_VDC_VIC_auto(RobertaPreTrainedModel):
-    """
-
-    The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
-    cross-attention is added between the self-attention layers, following the architecture described in *Attention is
-    all you need*_ by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
-    Kaiser and Illia Polosukhin.
-
-    To behave as an decoder the model needs to be initialized with the `is_decoder` argument of the configuration set
-    to `True`. To be used in a Seq2Seq model, the model needs to initialized with both `is_decoder` argument and
-    `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
-
-    .. _*Attention is all you need*: https://arxiv.org/abs/1706.03762
-
-    """
-
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, add_pooling_layer=True):
-        super().__init__(config)
-        self.config = config
-
-        self.embeddings = RobertaEmbeddings(config)
-        self.encoder = RobertaEncoder_gcls_VDC_VIC_auto(config)
-        
-        self.pooler = RobertaPooler_gcls(config) if add_pooling_layer else None
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_input_embeddings(self):
-        return self.embeddings.word_embeddings
-
-    def set_input_embeddings(self, value):
-        self.embeddings.word_embeddings = value
-
-    def _prune_heads(self, heads_to_prune):
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
-        class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    # Copied from transformers.models.bert.modeling_bert.BertModel.forward
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        pooler_type = None,
         VDC_info = None,
-        a_pooler = None,
+        automation_visualization = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -3053,7 +2392,7 @@ class RobertaModel_gcls_VDC_VIC_auto(RobertaPreTrainedModel):
             inputs_embeds=inputs_embeds,
             past_key_values_length=past_key_values_length,
         )
-        encoder_outputs = self.encoder(
+        encoder_outputs, visualization_results = self.encoder(
             embedding_output,
             attention_mask=extended_attention_mask,
             head_mask=head_mask,
@@ -3065,10 +2404,10 @@ class RobertaModel_gcls_VDC_VIC_auto(RobertaPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             VDC_info = VDC_info,
-            a_pooler = a_pooler,
+            automation_visualization = automation_visualization,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, pooler_type = pooler_type, 
+        pooled_output = self.pooler(sequence_output,
                                    extended_attention_mask_pooler = extended_attention_mask) if self.pooler is not None else None
 
         if not return_dict:
@@ -3081,216 +2420,7 @@ class RobertaModel_gcls_VDC_VIC_auto(RobertaPreTrainedModel):
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
             cross_attentions=encoder_outputs.cross_attentions,
-        )
-
-
-@add_start_docstrings(
-    """RoBERTa Model with a `language modeling` head on top for CLM fine-tuning.""", ROBERTA_START_DOCSTRING
-)
-
-
-class RobertaModel_gcls_rpt(RobertaPreTrainedModel):
-    """
-
-    The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
-    cross-attention is added between the self-attention layers, following the architecture described in *Attention is
-    all you need*_ by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
-    Kaiser and Illia Polosukhin.
-
-    To behave as an decoder the model needs to be initialized with the `is_decoder` argument of the configuration set
-    to `True`. To be used in a Seq2Seq model, the model needs to initialized with both `is_decoder` argument and
-    `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
-
-    .. _*Attention is all you need*: https://arxiv.org/abs/1706.03762
-
-    """
-
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, add_pooling_layer=True):
-        super().__init__(config)
-        self.config = config
-
-        self.embeddings = RobertaEmbeddings(config)
-        self.encoder = RobertaEncoder_gcls_rpt(config)
-        
-        self.pooler = RobertaPooler_gcls(config) if add_pooling_layer else None
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_input_embeddings(self):
-        return self.embeddings.word_embeddings
-
-    def set_input_embeddings(self, value):
-        self.embeddings.word_embeddings = value
-
-    def _prune_heads(self, heads_to_prune):
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
-        class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    # Copied from transformers.models.bert.modeling_bert.BertModel.forward
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        pooler_type = None,
-        VDC = None,
-        VDC_2 = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
-        r"""
-        encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
-            the model is configured as a decoder.
-        encoder_attention_mask (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
-            the cross-attention if the model is configured as a decoder. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-        past_key_values (`tuple(tuple(torch.FloatTensor))` of length `config.n_layers` with each tuple having 4 tensors of shape `(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
-            Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
-
-            If `past_key_values` are used, the user can optionally input only the last `decoder_input_ids` (those that
-            don't have their past key value states given to this model) of shape `(batch_size, 1)` instead of all
-            `decoder_input_ids` of shape `(batch_size, sequence_length)`.
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if self.config.is_decoder:
-            use_cache = use_cache if use_cache is not None else self.config.use_cache
-        else:
-            use_cache = False
-
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-        batch_size, seq_length = input_shape
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-
-        if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
-
-        if token_type_ids is None:
-            if hasattr(self.embeddings, "token_type_ids"):
-                buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
-                token_type_ids = buffered_token_type_ids_expanded
-            else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-
-        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
-        # ourselves in which case we just need to make it broadcastable to all heads.
-#         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
-
-        # If a 2D or 3D attention mask is provided for the cross-attention
-        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-        if self.config.is_decoder and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
-            if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
-        else:
-            encoder_extended_attention_mask = None
-        
-#         original_attention_mask = extended_attention_mask.clone()    # torch.Size([32, 1, 1, 128])
- 
-#         extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
-        
-#         extended_attention_mask_ = {}
-        
-#         for item in layer_L_set:
-#             extended_att_mask = extended_attention_mask.clone()
-#             for i in range(input_ids.size(0)):
-#                 extended_att_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-# #                 extended_att_mask[i,0,0,:2] = torch.tensor([0, -10000.0], dtype =torch.float)
-
-#             extended_attention_mask_[item] = extended_att_mask
-        
-            
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
-        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
-        embedding_output = self.embeddings(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            token_type_ids=token_type_ids,
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
-        )
-        encoder_outputs = self.encoder(
-            embedding_output,
-            attention_mask=extended_attention_mask,
-            head_mask=head_mask,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_extended_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            VDC = VDC,
-            VDC_2 = VDC_2,
-        )
-        sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, pooler_type = pooler_type) if self.pooler is not None else None
-
-        if not return_dict:
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        return BaseModelOutputWithPoolingAndCrossAttentions(
-            last_hidden_state=sequence_output,
-            pooler_output=pooled_output,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        )
+        ), visualization_results
 
 
 @add_start_docstrings(
@@ -3719,7 +2849,6 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
-        pooler_type = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -3740,7 +2869,6 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             extended_attention_mask = extended_attention_mask,
-            pooler_type = pooler_type,
         )
         sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
         logits = self.classifier(sequence_output)
@@ -3791,15 +2919,17 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
 class RobertaForSequenceClassification_gcls_auto(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
-    def __init__(self, config):
+    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler, g_pooler):
         super().__init__(config)
         config.num_labels = 3
         self.num_labels = config.num_labels
         self.config = config
 
-        self.roberta = RobertaModel_gcls_auto(config, add_pooling_layer=True)
+        self.roberta = RobertaModel_gcls_auto(config, add_pooling_layer=True, VDC_auto = VDC_auto, VIC_auto = VIC_auto,
+                                              num_auto_layers = num_auto_layers, head_wise = head_wise, auto_VDC_k = auto_VDC_k,
+                                              a_pooler = a_pooler, g_pooler = g_pooler)
         self.classifier = RobertaClassificationHead_gcls(config)
-
+            
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -3825,116 +2955,8 @@ class RobertaForSequenceClassification_gcls_auto(RobertaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
-        pooler_type = None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            extended_attention_mask = extended_attention_mask,
-            pooler_type = pooler_type,
-        )
-        sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
-        logits = self.classifier(sequence_output)
-
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-
-class RobertaForSequenceClassification_gcls_VDC_VIC_auto(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_gcls_VDC_VIC_auto(config, add_pooling_layer=True)
-        self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        pooler_type = None,
         VDC_info = None,
-        a_pooler = None,
+        automation_visualization = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -3944,7 +2966,7 @@ class RobertaForSequenceClassification_gcls_VDC_VIC_auto(RobertaPreTrainedModel)
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        outputs = self.roberta(
+        outputs, visualization_result = self.roberta(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -3955,10 +2977,10 @@ class RobertaForSequenceClassification_gcls_VDC_VIC_auto(RobertaPreTrainedModel)
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             extended_attention_mask = extended_attention_mask,
-            pooler_type = pooler_type,
             VDC_info = VDC_info,
-            a_pooler = a_pooler
+            automation_visualization = automation_visualization, 
         )
+        
         sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
         logits = self.classifier(sequence_output)
 
@@ -3989,7 +3011,7 @@ class RobertaForSequenceClassification_gcls_VDC_VIC_auto(RobertaPreTrainedModel)
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
-        return SequenceClassifierOutput(
+        return visualization_result, SequenceClassifierOutput(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
@@ -4005,718 +3027,6 @@ class RobertaForSequenceClassification_gcls_VDC_VIC_auto(RobertaPreTrainedModel)
     ROBERTA_START_DOCSTRING,
 )
 
-
-class RobertaForSequenceClassification_gcls_rpt(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_gcls_rpt(config, add_pooling_layer=True)
-        self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        pooler_type = None,
-        VDC = None,
-        VDC_2 = None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            extended_attention_mask = extended_attention_mask,
-            pooler_type = pooler_type,
-            VDC = VDC,
-            VDC_2 = VDC_2,
-        )
-        sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
-        logits = self.classifier(sequence_output)
-
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-class RobertaForSequenceClassification_gcls_td(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_gcls(config, add_pooling_layer=True)
-        
-        self.roberta_td = RobertaModel(config, add_pooling_layer=True)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.roberta_pooler = RobertaPooler(config)
-        self.dense = nn.Linear(config.hidden_size*2, config.num_labels)
-        
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        input_ids_2: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        layer_L = None,
-        gcls_attention_mask=None,
-        g_config=None,
-        g_token_pos=None,
-        target_idx=None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            layer_L = layer_L,
-            gcls_attention_mask = gcls_attention_mask,
-            g_config = g_config,
-            g_token_pos = g_token_pos,
-            target_idx = target_idx
-        )
-        
-        gcls_output = outputs[1]    # [B, 768]
-        
-        outputs_td = self.roberta_td(
-            input_ids_2,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict
-        )[0]
-        
-        target_in_sent_embed = torch.zeros(input_ids.size()[0], outputs_td.size()[-1]).to(input_ids.device)
-        
-        for i in range(input_ids.size()[0]):
-            x = (gcls_attention_mask[i][0] == 1).nonzero(as_tuple=True)[0]
-            target_embed = outputs_td[i][x[0]-1:x[-1]+1-1]    # -1 -> cls가 1개.
-            target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
-        
-        target_in_sent_embed = self.dropout(target_in_sent_embed)    # [B, 768]
-        
-        # use concat. 
-        final = torch.cat((gcls_output, target_in_sent_embed), dim = -1)
-        logits = self.dense(final)
-        
-        # use maxpooling
-#         final = torch.stack((gcls_output, target_in_sent_embed), dim = 1)
-#         final = torch.max(final, dim = 1)[0]
-#         logits = self.dense(final)
-        
-        # use mean
-#         final = torch.stack((gcls_output, target_in_sent_embed), dim = 1)
-#         final = torch.mean(final, dim = 1)
-#         logits = self.dense(final)
-        
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-####### Implementation of RoBERTa-LCF and RoBERTa-LCFS
-
-class Encoder(nn.Module):
-    def __init__(self, config, layer_num=1):
-        super(Encoder, self).__init__()
-        self.config = config
-        self.encoder = nn.ModuleList([SelfAttention(config) for _ in range(layer_num)])
-        self.tanh = torch.nn.Tanh()
-
-    def forward(self, x):
-        for i, enc in enumerate(self.encoder):
-            x = self.tanh(enc(x)[0])
-        return x
-
-class SelfAttention(nn.Module):
-    def __init__(self, config):
-        super(SelfAttention, self).__init__()
-        self.config = config
-        self.SA = RobertaSelfAttention(config)
-
-    def forward(self, inputs):
-        zero_vec = np.zeros((inputs.size(0), 1, 1, 128))
-        zero_tensor = torch.tensor(zero_vec).float().to(inputs.device)
-        SA_out = self.SA(inputs, zero_tensor)
-        return SA_out
-
-class RobertaForSequenceClassification_lcf(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel(config, add_pooling_layer=True)
-        self.roberta_local = RobertaModel(config, add_pooling_layer=True)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.roberta_SA = Encoder(config)
-        self.linear2 = nn.Linear(config.hidden_size * 2, config.hidden_size)
-        self.roberta_SA_ = Encoder(config)
-        self.roberta_pooler = RobertaPooler(config)
-        self.dense = nn.Linear(config.hidden_size, config.num_labels)
-        
-        # self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids_lcf_global: Optional[torch.LongTensor] = None,
-        input_ids_lcf_local: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        lcf_matrix = None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
-        lcf_matrix = lcf_matrix.unsqueeze(2)
-        
-        global_context_features = self.roberta(
-            input_ids_lcf_global,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict
-        )[0]
-        
-        local_context_features = self.roberta_local(
-            input_ids_lcf_local,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict
-        )[0]
-        
-        lcf_features = torch.mul(local_context_features, lcf_matrix)
-        lcf_features = self.roberta_SA(lcf_features)
-        
-        cat_features = torch.cat((lcf_features, global_context_features), dim=-1)
-        cat_features = self.linear2(cat_features)
-        cat_features = self.dropout(cat_features)
-        cat_features = self.roberta_SA_(cat_features)
-        
-        pooled_out = self.roberta_pooler(cat_features)
-        logits = self.dense(pooled_out)
-        
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=None,
-            attentions=None,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-class RobertaForSequenceClassification_asc_td(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel(config, add_pooling_layer=True)
-        self.roberta_td = RobertaModel(config, add_pooling_layer=True)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.dense = nn.Linear(config.hidden_size*2, config.num_labels)
-        
-        # self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        input_ids_2: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        gcls_attention_mask=None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict
-        )[1]
-        
-        outputs_td = self.roberta_td(
-            input_ids_2,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict
-        )[0]
-        
-        target_in_sent_embed = torch.zeros(input_ids.size()[0], outputs_td.size()[-1]).to(input_ids.device)
-        
-        for i in range(input_ids.size()[0]):
-            x = (gcls_attention_mask[i][0] == 1).nonzero(as_tuple=True)[0]
-            target_embed = outputs_td[i][x[0]-1:x[-1]+1-1]    # -1 -> cls가 1개.
-            target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
-        
-        target_in_sent_embed = self.dropout(target_in_sent_embed)    # [B, 768]
-        
-        # use concat. 
-        final = torch.cat((outputs, target_in_sent_embed), dim = -1)
-        logits = self.dense(final)
-        
-        # use maxpooling
-#         final = torch.stack((gcls_output, target_in_sent_embed), dim = 1)
-#         final = torch.max(final, dim = 1)[0]
-#         logits = self.dense(final)
-        
-        # use mean
-#         final = torch.stack((gcls_output, target_in_sent_embed), dim = 1)
-#         final = torch.mean(final, dim = 1)
-#         logits = self.dense(final)
-        
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=None,
-            attentions=None,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-class RobertaForSequenceClassification_lcf_td(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel(config, add_pooling_layer=True)
-        self.roberta_local = RobertaModel(config, add_pooling_layer=True)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.roberta_SA = Encoder(config)
-        self.linear2 = nn.Linear(config.hidden_size * 2, config.hidden_size)
-        self.roberta_SA_ = Encoder(config)
-        self.roberta_pooler = RobertaPooler(config)
-        self.dense = nn.Linear(config.hidden_size, config.num_labels)
-        
-        # self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids_lcf_global: Optional[torch.LongTensor] = None,
-        input_ids_lcf_local: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        lcf_matrix = None,
-        gcls_attention_mask = None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
-        lcf_matrix = lcf_matrix.unsqueeze(2)
-        
-        global_context_features = self.roberta(
-            input_ids_lcf_global,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict
-        )[0]
-        
-        local_context_features = self.roberta_local(
-            input_ids_lcf_local,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict
-        )[0]
-        
-        lcf_features = torch.mul(local_context_features, lcf_matrix)
-        lcf_features = self.roberta_SA(lcf_features)
-        
-        cat_features = torch.cat((lcf_features, global_context_features), dim=-1)
-        cat_features = self.linear2(cat_features)
-        cat_features = self.dropout(cat_features)
-        cat_features = self.roberta_SA_(cat_features)    # torch.tensor([B, 128, 768])
-        
-        target_in_sent_embed = torch.zeros(input_ids_lcf_global.size()[0], cat_features.size()[-1]).to(input_ids_lcf_global.device)
-        
-        for i in range(input_ids_lcf_global.size()[0]):
-            x = (gcls_attention_mask[i][0] == 1).nonzero(as_tuple=True)[0]
-            
-            # 가장 기본적인 RoBERTa-TD
-            target_embed = cat_features[i][x[0]-1:x[-1]+1-1]    # -1 -> cls가 1개.
-            target_in_sent_embed[i] = torch.max(target_embed, dim=0)[0]
-            
-        target_in_sent_embed = self.dropout(target_in_sent_embed)
-        
-        
-        logits = self.dense(target_in_sent_embed)
-        
-        
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=None,
-            attentions=None,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
 
 class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
@@ -4874,221 +3184,6 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
     ROBERTA_START_DOCSTRING,
 )
 
-class RobertaForSequenceClassification_gcls_er(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_gcls_er(config, add_pooling_layer=True)
-        self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        layer_L = None,
-        gcls_attention_mask=None,
-        g_config=None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            layer_L = layer_L,
-            gcls_attention_mask = gcls_attention_mask,
-            g_config = g_config
-        )
-        sequence_output = outputs[1]
-        logits = self.classifier(sequence_output)
-
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-class RobertaForSequenceClassification_gcls_moe(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_gcls_moe(config, add_pooling_layer=True)
-        self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        layer_L = None,
-        gcls_attention_mask=None,
-        g_config=None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            layer_L = layer_L,
-            gcls_attention_mask = gcls_attention_mask,
-            g_config = g_config
-        )
-        sequence_output = outputs[1]
-        logits = self.classifier(sequence_output)
-
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
 
 class RobertaForMultipleChoice(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
@@ -5297,7 +3392,7 @@ class RobertaClassificationHead_gcls(nn.Module):
         self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
 
     def forward(self, features, **kwargs):
-        x = features  # take <s> token (equiv. to [CLS])
+        x = features 
         x = self.dropout(x)
         x = self.dense(x)
         x = torch.tanh(x)
