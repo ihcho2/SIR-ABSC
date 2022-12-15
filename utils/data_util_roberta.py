@@ -78,7 +78,7 @@ class ReadData:
             self.DGEDT_validation_data = self.eval_data_loader.data
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
-        if opt.model_name in ['gcls', 'scls', 'roberta', 'gcls_er', 'gcls_moe', 'roberta_gcls', 'roberta_gcls_rpt', 'roberta_gcls_2', 'roberta_gcls_moe', 'roberta_td', 'roberta_fm', 'roberta_lcf_td', 'roberta_gcls_td', 'roberta_asc_td']:
+        if opt.model_name in ['roberta', 'roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
             
             if opt.graph_type == 'dg':
                 self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, self.opt.L_config_base, 
@@ -220,7 +220,7 @@ class ReadData:
             
             # Converting to gcls_att_mask. 
             aspect_length = len(DGEDT_train_data[i]['aspect_indices']) - 2
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_rpt']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_auto']:
                 A =2 
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
@@ -289,7 +289,7 @@ class ReadData:
             final_all_paths.append(all_paths)
             
             # Now let's make the gcls_att_mask.
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_rpt']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_auto']:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
@@ -587,8 +587,10 @@ class ReadData:
                 extended_attention_mask[i, 12, 0, 1, 0] = -10000.0
                 extended_attention_mask[i, 12, 0, 1, 1] = -10000.0
             
-            for item in reversed(range(6)):
+            for item in reversed(range(self.opt.auto_VDC_k+1)):
                 VDC_info[i][gcls_attention_mask[i][item][0] == 1] = item+1
+                
+            VDC_info = VDC_info.long()
                 
             if i % 300 == 0 and type=='train_data':
                 print('='*77)
