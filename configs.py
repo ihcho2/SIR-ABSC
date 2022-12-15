@@ -115,6 +115,14 @@ def get_config():
                         type=int,
                         default=42,
                         help="random seed for initialization")
+    parser.add_argument('--num_auto_layers',
+                        type=int,
+                        default=1,
+                        help="number of layers for GoBERTa-automation")
+    parser.add_argument('--auto_VDC_k',
+                        type=int,
+                        default=1,
+                        help="how many numbers to learn for VDC automation")
     parser.add_argument('--gradient_accumulation_steps',
                         type=int,
                         default=1,
@@ -165,6 +173,8 @@ def get_config():
                         type= boolean_string, default = False)
     parser.add_argument('--VIC_auto',
                         type= boolean_string, default = False)
+    parser.add_argument('--head_wise',
+                        type= boolean_string, default = False)
     parser.add_argument('--g_token_pos', type=int, default=1)
     parser.add_argument("--graph_type",
                         type=str,
@@ -177,6 +187,10 @@ def get_config():
                         type=str,
                         default = 'att',
                         help="The pooler type, one of att, avg, max."),
+    parser.add_argument("--a_pooler",
+                        type=str,
+                        default = 's_g_concat',
+                        help="The pooler type of automation, one of att, avg, max."),
     parser.add_argument("--model_save_path", default=None ,type=str,
                         help="The output directory where the model checkpoints will be written.")
     parser.add_argument("--load_checkpoint", default=None ,type=str,
