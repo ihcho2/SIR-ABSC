@@ -119,11 +119,11 @@ class ReadData:
         cumul_R_trans = {}
         total_tokens = [] # Used for doing DG analysis
         
-        gcls_attention_mask = torch.zeros((len(DGEDT_train_data), max(layer_L)+1, path_types, 128), dtype=torch.float)
+        gcls_attention_mask = torch.zeros((len(DGEDT_train_data), 5+1, path_types, 128), dtype=torch.float)
         for i in range(len(DGEDT_train_data)):
             length_R_trans[i] = {}
             cumul_R_trans[i] = {}
-            for j in range(max(layer_L)+1):
+            for j in range(5+1):
                 length_R_trans[i][j] = {}
                 cumul_R_trans[i][j] = {}
                 for k in range(min(2**j, path_types)):
@@ -160,7 +160,7 @@ class ReadData:
                     length_0_trans.append(item)
             
             used_trans = []
-            for l in range(1, max(layer_L)+1):
+            for l in range(1, 5+1):
                 #######
                 for j in range(min(2**(l-1), path_types)):
                     if 2**l <= path_types:
@@ -248,15 +248,15 @@ class ReadData:
         print('='*77)
         print('reporting DG statistics')
         total_toks = 0
-        R_tokens = torch.zeros((max(layer_L)+1, path_types), dtype = torch.float)
+        R_tokens = torch.zeros((5+1, path_types), dtype = torch.float)
         
         for i in range(len(DGEDT_train_data)):
             total_toks += total_tokens[i]
-            for j in range(max(layer_L)+1):
+            for j in range(5+1):
                 for k in range(path_types):
                     R_tokens[j,k] += torch.sum(gcls_attention_mask[i][j][k])
                     
-        for i in range(max(layer_L)+1):
+        for i in range(5+1):
             print('-'*77)
             print('Range: ', i)
             for j in range(path_types):
