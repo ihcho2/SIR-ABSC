@@ -1251,7 +1251,7 @@ class RobertaPooler_TD(nn.Module):
         self.activation = nn.Tanh()
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, hidden_states: torch.Tensor, extended_attention_mask_pooler, VDC_info=None) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, VDC_info=None) -> torch.Tensor:
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
         
@@ -1269,16 +1269,16 @@ class RobertaPooler_TD(nn.Module):
         
         #########################
         # avg pooling
-        index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+        index = VDC_info == 1
         index = index.long()
         
         mask = index.unsqueeze(2)
         pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
         
         # max_pooling
-#         index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+#         index = VDC_info == 1
 #         index = index.long()
-#         index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+#         index_2 = (VDC_info != 1).long()*-float('inf')
 #         index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
 #         mask = index.unsqueeze(2)
 #         mask_2 = index_2.unsqueeze(2)
@@ -1315,7 +1315,7 @@ class RobertaPooler_gcls(nn.Module):
             if self.dense_2.bias is not None:
                 self.dense_2.bias.data.zero_()
         
-    def forward(self, hidden_states: torch.Tensor, extended_attention_mask_pooler=None) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, VDC_info=None) -> torch.Tensor:
         if self.g_pooler == 's_g_avg':
             first_second_token_tensor = hidden_states[:, :2]
             cat = torch.mean(first_second_token_tensor, dim = 1)
@@ -1343,7 +1343,7 @@ class RobertaPooler_gcls(nn.Module):
         elif self.g_pooler == 's_g_t_avg_concat':  # concatanating s, g, and t_avg
             first_second_token_tensor = hidden_states[:, :2]
             
-            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = VDC_info == 1
             index = index.long()
             mask = index.unsqueeze(2)
             pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
@@ -1355,10 +1355,9 @@ class RobertaPooler_gcls(nn.Module):
           
         elif self.g_pooler == 's_g_t_max_concat':  # concatanating s, g, and t_max
             first_second_token_tensor = hidden_states[:, :2]
-            
-            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = VDC_info == 1
             index = index.long()
-            index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+            index_2 = (VDC_info != 1.0).long()*-float('inf')
             index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
             mask = index.unsqueeze(2)
             mask_2 = index_2.unsqueeze(2)
@@ -1379,7 +1378,7 @@ class RobertaPooler_gcls(nn.Module):
             final_output = self.activation(pooled_output)
         
         elif self.g_pooler == 't_avg_only':
-            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = VDC_info == 1
             index = index.long()
 
             mask = index.unsqueeze(2)
@@ -1393,7 +1392,7 @@ class RobertaPooler_gcls(nn.Module):
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
-            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = VDC_info == 1.0
             index[:,:2] = 1
             index = index.long()
 
@@ -1407,7 +1406,7 @@ class RobertaPooler_gcls(nn.Module):
         elif self.g_pooler == 't_avg_concat':
             first_second_token_tensor = hidden_states[:, :2]
             
-            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = VDC_info == 1
             index = index.long()
             
             mask = index.unsqueeze(2)
@@ -1425,7 +1424,7 @@ class RobertaPooler_gcls(nn.Module):
             # target token vectors
             target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]).to(hidden_states.device)
             for i in range(hidden_states.size()[0]):
-                x = (extended_attention_mask_pooler[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
+                x = (VDC_info == 1).nonzero(as_tuple=True)[0]
 
                 # 가장 기본적인 RoBERTa-TD
                 target_embed = hidden_states[i][x[0]:x[-1]+1]
@@ -1443,7 +1442,7 @@ class RobertaPooler_gcls(nn.Module):
             # target token vectors
             target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]).to(hidden_states.device)
             for i in range(hidden_states.size()[0]):
-                x = (extended_attention_mask_pooler[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
+                x = (VDC_info == 1).nonzero(as_tuple=True)[0]
 
                 # 가장 기본적인 RoBERTa-TD
                 target_embed = hidden_states[i][x[0]:x[-1]+1]
@@ -1455,9 +1454,9 @@ class RobertaPooler_gcls(nn.Module):
             final_output = self.activation(pooled_output)
             
         elif self.g_pooler == 't_max_only':
-            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
+            index = VDC_info == 1
             index = index.long()
-            index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+            index_2 = (VDC_info != 1).long()*-float('inf')
             index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
             mask = index.unsqueeze(2)
             mask_2 = index_2.unsqueeze(2)
@@ -1472,8 +1471,8 @@ class RobertaPooler_gcls(nn.Module):
             # s and g vectors
             first_second_token_tensor = hidden_states[:, :2]
             
-            index = extended_attention_mask_pooler[12][:,0,1,:] == 0.0
-            index_2 = (extended_attention_mask_pooler[12][:,0,1,:] != 0.0).long()*-float('inf')
+            index = VDC_info == 1
+            index_2 = (VDC_info != 1).long()*-float('inf')
             index_2[index_2 != index_2] = 0
             index = index.long()
             mask = index.unsqueeze(2)
@@ -1490,7 +1489,7 @@ class RobertaPooler_gcls(nn.Module):
             target_in_sent_embed = torch.zeros(hidden_states.size()[0], hidden_states.size()[-1]).to(hidden_states.device)
             
             for i in range(hidden_states.size()[0]):
-                x = (extended_attention_mask_pooler[12][i][0][1][:] == 0.0).nonzero(as_tuple=True)[0]
+                x = (VDC_info == 1).nonzero(as_tuple=True)[0]
 
                 # 가장 기본적인 RoBERTa-TD
                 target_embed = hidden_states[i][x[0]:x[-1]+1]
@@ -1905,7 +1904,7 @@ class RobertaModel_TD(RobertaPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        extended_attention_mask_pooler = None,
+        VDC_info = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -2006,7 +2005,7 @@ class RobertaModel_TD(RobertaPreTrainedModel):
             return_dict=return_dict,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, extended_attention_mask_pooler = extended_attention_mask_pooler) if self.pooler is not None else None
+        pooled_output = self.pooler(sequence_output, VDC_info = VDC_info) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -2094,6 +2093,7 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
+        VDC_info = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -2209,8 +2209,7 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
             return_dict=return_dict,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output,
-                                    extended_attention_mask_pooler =extended_attention_mask) if self.pooler is not None else None
+        pooled_output = self.pooler(sequence_output, VDC_info = VDC_info) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -2419,8 +2418,7 @@ class RobertaModel_gcls_auto(RobertaPreTrainedModel):
             automation_visualization = automation_visualization,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output,
-                                   extended_attention_mask_pooler = extended_attention_mask) if self.pooler is not None else None
+        pooled_output = self.pooler(sequence_output, VDC_info = VDC_info) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -2861,6 +2859,7 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
+        VDC_info = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -2881,6 +2880,7 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             extended_attention_mask = extended_attention_mask,
+            VDC_info = VDC_info,
         )
         sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
         logits = self.classifier(sequence_output)
@@ -3085,6 +3085,7 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
+        VDC_info = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -3104,7 +3105,7 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            extended_attention_mask_pooler = extended_attention_mask,
+            VDC_info = VDC_info,
         )[1]
         
 #         target_in_sent_embed = torch.zeros(input_ids.size()[0], features.size()[-1]).to(input_ids.device)
