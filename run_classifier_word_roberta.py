@@ -138,7 +138,7 @@ class Instructor:
         elif args.model_class == RobertaForSequenceClassification_TD:
             self.model = RobertaForSequenceClassification_TD.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_gcls:
-            self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base')
+            self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base', g_pooler = args.g_pooler)
         elif args.model_class == RobertaForSequenceClassification_gcls_auto:
             self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base', VDC_auto = args.VDC_auto, VIC_auto = args.VIC_auto, num_auto_layers = args.num_auto_layers, head_wise = args.head_wise, auto_VDC_k = args.auto_VDC_k, 
                                                                                     a_pooler = args.a_pooler, 
@@ -512,9 +512,7 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask, 
-                                              VDC_info = train_VDC_info, 
-                                              a_pooler = args.a_pooler)[:2]
+                                              extended_attention_mask = train_extended_attention_mask)[:2]
                    
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
                     _, output_ = self.model(input_ids, labels = label_ids,
@@ -725,8 +723,7 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask,
-                                              VDC_info = eval_VDC_info, a_pooler = args.a_pooler)[:2]
+                                              extended_attention_mask = extended_att_mask)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
                     vis, output_ = self.model(input_ids, labels = label_ids,
@@ -736,15 +733,17 @@ class Instructor:
                     loss, logits = output_[:2]
                     
                     if automation_visualization == True:
-                        if vis_vdc == None:
-                            vis_vdc = vis[0].transpose(0,1)
-                        else:
-                            vis_vdc = torch.cat((vis_vdc, vis[0].transpose(0,1)), dim= 0)
-
-                        if vis_vic == None:
-                            vis_vic = vis[1].transpose(0,1)
-                        else:
-                            vis_vic = torch.cat((vis_vic, vis[1].transpose(0,1)), dim= 0) 
+                        if args.VDC_auto:
+                            if vis_vdc == None:
+                                vis_vdc = vis[0].transpose(0,1)
+                            else:
+                                vis_vdc = torch.cat((vis_vdc, vis[0].transpose(0,1)), dim= 0)
+                        
+                        if args.VIC_auto:
+                            if vis_vic == None:
+                                vis_vic = vis[1].transpose(0,1)
+                            else:
+                                vis_vic = torch.cat((vis_vic, vis[1].transpose(0,1)), dim= 0)
                                 
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
@@ -883,37 +882,44 @@ class Instructor:
             
         
         if automation_visualization == True:
-            assert vis_vic.size(0) == len(self.dataset.eval_examples) # vis_vic.size():  torch.Size([1120, 12, 12, 4])
-            assert vis_vdc.size(0) == len(self.dataset.eval_examples) # vis_vdc.size():  torch.Size([1120, 12, 12, 7])
-            
-            if args.head_wise == True:
-                print('='*77)
-                print('1. Layer-wise results')
-                print('1.1 VIC_results: ')
-                for jj in range(12):
-                    result = torch.mean(torch.mean(vis_vic[:, jj, :, :], dim= 0), dim = 0).tolist()
-                    result_ = [round(n, 2) for n in result]
-                    print(f'layer {jj}: ', result_ )
-                print('1.2 VDC_results: ')
-                for jj in range(12):
-                    result = torch.mean(torch.mean(vis_vdc[:, jj, :, :], dim= 0), dim = 0).tolist()
-                    result_ = [round(n,2) for n in result]
-                    print(f'layer {jj}: ', result_)
-                    
-            else:
-                print('='*77)
-                print('1. Layer-wise results')
-                print('1.1 VIC_results: ')
-                for jj in range(12):
-                    result = torch.mean(vis_vic[:, jj, :], dim= 0).tolist()
-                    result_ = [round(n, 2) for n in result]
-                    print(f'layer {jj}: ', result_)
-                print('1.2 VDC_results: ')
-                for jj in range(12):
-                    result = torch.mean(vis_vdc[:, jj, :], dim= 0).tolist()
-                    result_ = [round(n, 2) for n in result]
-                    print(f'layer {jj}: ', result_)
+            if args.VDC_auto:
+                assert vis_vdc.size(0) == len(self.dataset.eval_examples) # vis_vdc.size():  torch.Size([1120, 12, 12, 7])
+                if args.head_wise == True:
+                    print('='*77)
+                    print('1. Layer-wise results')
+                    print('1.1 VDC_results: ')
+                    for jj in range(12):
+                        result = torch.mean(torch.mean(vis_vdc[:, jj, :, :], dim= 0), dim = 0).tolist()
+                        result_ = [round(n,2) for n in result]
+                        print(f'layer {jj}: ', result_)
+
+                else:
+                    print('='*77)
+                    print('1. Layer-wise results')
+                    print('1.1 VDC_results: ')
+                    for jj in range(12):
+                        result = torch.mean(vis_vdc[:, jj, :], dim= 0).tolist()
+                        result_ = [round(n,2) for n in result]
+                        print(f'layer {jj}: ', result_)
                 
+            if args.VIC_auto:
+                assert vis_vic.size(0) == len(self.dataset.eval_examples) # vis_vic.size():  torch.Size([1120, 12, 12, 4])
+                if args.head_wise == True:
+                    print('='*77)
+                    print('1. Layer-wise results')
+                    print('1.1 VIC_results: ')
+                    for jj in range(12):
+                        result = torch.mean(torch.mean(vis_vic[:, jj, :, :], dim= 0), dim = 0).tolist()
+                        result_ = [round(n, 2) for n in result]
+                        print(f'layer {jj}: ', result_ )
+                else:
+                    print('='*77)
+                    print('1. Layer-wise results')
+                    print('1.1 VIC_results: ')
+                    for jj in range(12):
+                        result = torch.mean(vis_vic[:, jj, :], dim= 0).tolist()
+                        result_ = [round(n, 2) for n in result]
+                        print(f'layer {jj}: ', result_ )
             
         return result, validation_increased
         
