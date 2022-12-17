@@ -539,17 +539,9 @@ class ReadData:
         extended_attention_mask = extended_attention_mask.repeat(1,1,all_input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
         print('extended_attention_mask.size() should be [N,1,128,128] ', extended_attention_mask.size())
 
-#         extended_attention_mask = extended_attention_mask.unsqueeze(1).repeat(1,12,1,1,1)
-#         print('extended_attention_mask.size() should be [N,12,1,128,128] ', extended_attention_mask.size())
+        extended_attention_mask = extended_attention_mask.unsqueeze(1).repeat(1,12,1,1,1)
+        print('extended_attention_mask.size() should be [N,12,1,128,128] ', extended_attention_mask.size())
 
-        # head 고려
-        extended_attention_mask = extended_attention_mask.unsqueeze(1).repeat(1,13,1,1,1)
-        print('extended_attention_mask.size() should be [N,12,12,128,128] ', extended_attention_mask.size())
-
-#         for j, item in enumerate(self.opt.L_config_base):
-#             for i in range(all_input_ids.size(0)):
-#                 extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-        
         # VDC_info: for VDC-automation
         VDC_info = torch.full([all_input_ids.size(0), 128], 0) 
         
@@ -570,23 +562,6 @@ class ReadData:
                                                   [self.opt.g_config[6], self.opt.g_config[7]]], dtype = torch.float))
         
         for i in range(all_input_ids.size(0)):
-            # 13번째에 무조건 그냥 target position 만 추가. 111333555777 같은 경우를 위해.
-            if self.opt.graph_type == 'dg':
-                extended_attention_mask[i, 12, 0, 1, :] =  (1 - gcls_attention_mask[i][0][0]) * -10000.0
-                
-                # if only the T
-                extended_attention_mask[i, 12, 0, 1, 0] = -10000.0
-#                 extended_attention_mask[i, 12, 0, 1, 1] = -10000.0
-                
-                # 즉 여기서 manipulate 가능.
-                
-            elif self.opt.graph_type == 'sd':
-                extended_attention_mask[i, 12, 0, 1, :] =  (1 - gcls_attention_mask[i][0]) * -10000.0
-                
-                # if only the T
-                extended_attention_mask[i, 12, 0, 1, 0] = -10000.0
-                extended_attention_mask[i, 12, 0, 1, 1] = -10000.0
-            
             for item in reversed(range(self.opt.auto_VDC_k+1)):
                 VDC_info[i][gcls_attention_mask[i][item][0] == 1] = item+1
                 
@@ -599,10 +574,13 @@ class ReadData:
                 print('all_input_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_ids[i][:x[0]]))
                 print('-'*77)
                 x = (all_input_t_ids[i] == 1).nonzero(as_tuple=True)[0]
+                print(x)
                 print('all_input_t_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_t_ids[i][:x[0]]))
                 print('VDC_info[i]: ', VDC_info[i])
+                x = (VDC_info[i] == 1).nonzero(as_tuple=True)
+                print('target tokens according to VDC_info: ', 
+                      tokenizer.convert_ids_to_tokens(all_input_ids[i][x[0]])) 
                 print('-'*77)
-                print('self.train_raw[3*i]: ', self.train_raw[3*i])
                 
 #                 raw file을 불러오고 i 번째 가지고 와서 spacy 가하면 될 듯?
 #                 여기에 실제 데이터 raw 보여주고, aspect 보여주고 spacy 했을 때 그림 결과 보여주게끔 코드를 보여주기.
