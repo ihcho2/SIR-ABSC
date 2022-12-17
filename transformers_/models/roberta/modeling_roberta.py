@@ -788,30 +788,31 @@ class RobertaLayer_auto(nn.Module):
             V_input = hidden_states[:, :2].view(-1, 2*768)
         #################################
         
-        if self.num_auto_layers == 0:
-            VIC_gate = self.VIC_gate
-            VIC_gate = self.sigmoid(VIC_gate)
-            
-            VDC_gate = self.VDC_gate
-            
-        elif self.num_auto_layers == 1:
-            VIC_gate = self.VIC_gate(V_input)
-            VIC_gate = self.sigmoid(VIC_gate)
-            
-            VDC_gate = self.VDC_gate(V_input)
-        
-        elif self.num_auto_layers == 2:
-            VIC_gate = self.VIC_gate(V_input)
-            VIC_gate = self.tanh(VIC_gate)
-            VIC_gate = self.VIC_gate_2(VIC_gate)
-            VIC_gate = self.sigmoid(VIC_gate)
-            
-            VDC_gate = self.VDC_gate(V_input)
-            VDC_gate = self.tanh(VDC_gate)
-            VDC_gate = self.VDC_gate_2(VDC_gate)
-            
+        VDC_gate, VIC_gate = None, None
+        if self.VDC_auto == True:
+            if self.num_auto_layers == 0:
+                VDC_gate = self.VDC_gate
+            elif self.num_auto_layers == 1:
+                VDC_gate = self.VDC_gate(V_input)
+            elif self.num_auto_layers == 2:
+                VDC_gate = self.VDC_gate(V_input)
+                VDC_gate = self.tanh(VDC_gate)
+                VDC_gate = self.VDC_gate_2(VDC_gate)
+                
+        if self.VIC_auto == True:
+            if self.num_auto_layers == 0:
+                VIC_gate = self.VIC_gate
+                VIC_gate = self.sigmoid(VIC_gate)
+            elif self.num_auto_layers == 1:
+                VIC_gate = self.VIC_gate
+                VIC_gate = self.sigmoid(VIC_gate)
+            elif self.num_auto_layers == 2:
+                VIC_gate = self.VIC_gate(V_input)
+                VIC_gate = self.tanh(VIC_gate)
+                VIC_gate = self.VIC_gate_2(VIC_gate)
+                VIC_gate = self.sigmoid(VIC_gate)
+                
         # 사실 위에 두 개 합치는게 낫긴 함
-        
         
         self_attention_outputs = self.attention(
             hidden_states,
@@ -871,14 +872,19 @@ class RobertaLayer_auto(nn.Module):
         if self.is_decoder:
             outputs = outputs + (present_key_value,)
         
+        vis_vdc, vis_vic = None, None
         if automation_visualization == True:
-            if self.head_wise == True:
-                vis_vdc = nn.functional.softmax(VDC_gate.clone().reshape(VDC_info.size(0), 12, -1), dim = -1)
-                vis_vic = VIC_gate.clone().reshape(VDC_info.size(0), 12, 4)
-            else:
-                vis_vdc = nn.functional.softmax(VDC_gate.clone(), dim = -1)
-                vis_vic = VIC_gate.clone()
-                
+            if self.VDC_auto == True:
+                if self.head_wise == True:
+                    vis_vdc = nn.functional.softmax(VDC_gate.clone().reshape(VDC_info.size(0), 12, -1), dim = -1)
+                else:
+                    vis_vdc = nn.functional.softmax(VDC_gate.clone(), dim = -1)
+                    
+            if self.VIC_auto == True:
+                if self.head_wise == True:
+                    vis_vic = VIC_gate.clone().reshape(VDC_info.size(0), 12, 4)
+                else:
+                    vis_vic = VIC_gate.clone()
             return outputs, (vis_vdc, vis_vic)
         
         else:
@@ -1100,6 +1106,7 @@ class RobertaEncoder_gcls_auto(nn.Module):
         self.gradient_checkpointing = False
         
         self.VDC_auto = VDC_auto
+        self.VIC_auto = VIC_auto
         
     def forward(
         self,
@@ -1176,13 +1183,18 @@ class RobertaEncoder_gcls_auto(nn.Module):
                     automation_visualization = automation_visualization,
                 )
                 
+            
             if automation_visualization:
-                if i == 0:
-                    auto_VDC_results = visualization_results[0].unsqueeze(0)
-                    auto_VIC_results = visualization_results[1].unsqueeze(0)
-                else:
-                    auto_VDC_results = torch.cat((auto_VDC_results, visualization_results[0].unsqueeze(0)), dim = 0)
-                    auto_VIC_results = torch.cat((auto_VIC_results, visualization_results[1].unsqueeze(0)), dim = 0)
+                if self.VDC_auto:
+                    if i == 0:
+                        auto_VDC_results = visualization_results[0].unsqueeze(0)
+                    else:
+                        auto_VDC_results = torch.cat((auto_VDC_results, visualization_results[0].unsqueeze(0)), dim = 0)
+                if self.VIC_auto:
+                    if i == 0:
+                        auto_VIC_results = visualization_results[1].unsqueeze(0)
+                    else:
+                        auto_VIC_results = torch.cat((auto_VIC_results, visualization_results[1].unsqueeze(0)), dim = 0)
             
             hidden_states = layer_outputs[0]
             if use_cache:
@@ -2032,14 +2044,14 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, add_pooling_layer=True):
+    def __init__(self, config, g_pooler, add_pooling_layer=True):
         super().__init__(config)
         self.config = config
 
         self.embeddings = RobertaEmbeddings(config)
         self.encoder = RobertaEncoder_gcls(config)
         
-        self.pooler = RobertaPooler_gcls(config) if add_pooling_layer else None
+        self.pooler = RobertaPooler_gcls(config, g_pooler) if add_pooling_layer else None
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -2815,13 +2827,13 @@ class RobertaForSequenceClassification(RobertaPreTrainedModel):
 class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
-    def __init__(self, config):
+    def __init__(self, config, g_pooler):
         super().__init__(config)
         config.num_labels = 3
         self.num_labels = config.num_labels
         self.config = config
 
-        self.roberta = RobertaModel_gcls(config, add_pooling_layer=True)
+        self.roberta = RobertaModel_gcls(config, add_pooling_layer=True, g_pooler = g_pooler)
         self.classifier = RobertaClassificationHead_gcls(config)
 
         # Initialize weights and apply final processing
