@@ -480,12 +480,8 @@ class Instructor:
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
                         print('guid: ', all_input_guids[0])
-                        print('train_extended_attention_mask layer 13')
-                        x = (train_extended_attention_mask[12][0][0][1] == 0).nonzero(as_tuple=True)[0]
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                        print('train_VDC_info[0] target: ')
                         x = (train_VDC_info[0] == 1).nonzero(as_tuple=True)[0]
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        print('train_VDC_info[0] target: ', tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
 #                         print('train_extended_attention_mask layer 5')
 #                         x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
@@ -512,7 +508,8 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask)[:2]
+                                              extended_attention_mask = train_extended_attention_mask, 
+                                              VDC_info = train_VDC_info)[:2]
                    
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
                     _, output_ = self.model(input_ids, labels = label_ids,
@@ -723,7 +720,8 @@ class Instructor:
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask)[:2]
+                                              extended_attention_mask = extended_att_mask,
+                                              VDC_info = eval_VDC_info)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
                     vis, output_ = self.model(input_ids, labels = label_ids,
