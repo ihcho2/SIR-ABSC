@@ -483,12 +483,12 @@ class Instructor:
                         x = (train_VDC_info[0] == 1).nonzero(as_tuple=True)[0]
                         print('train_VDC_info[0] target: ', tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
-#                         print('train_extended_attention_mask layer 5')
-#                         x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
-#                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-#                         print('train_extended_attention_mask layer 9')
-#                         x = (train_extended_attention_mask[8][0][0][1] == 0).nonzero(as_tuple=True)[0]
-#                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        print('train_extended_attention_mask layer 0')
+                        x = (train_extended_attention_mask[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        print('train_extended_attention_mask layer 11')
+                        x = (train_extended_attention_mask[11][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
                     elif self.opt.model_name in ['roberta']:
                         print('-'*77)
