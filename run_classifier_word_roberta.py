@@ -152,6 +152,8 @@ class Instructor:
         
         self.model.roberta.embeddings.word_embeddings.weight.data[50249] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
         
+        self.model.roberta.embeddings.word_embeddings.weight.data[50250] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
+        
         if init_model_state_dict !=None:
             self.model.load_state_dict(init_model_state_dict)
         else:
