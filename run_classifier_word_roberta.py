@@ -23,13 +23,13 @@ from optimization import BERTAdam
 from configs import get_config
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
 from utils.data_util_roberta import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor, MamsProcessor
-from utils.save_and_load import load_model_MoE, load_model_roberta_auto
+from utils.save_and_load import load_model_MoE, load_model_roberta_t
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
 import time
 from data_utils import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_auto
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_TD_t_star, RobertaForSequenceClassification_gcls_auto
 
 from torch.distributions.bernoulli import Bernoulli
 
@@ -108,13 +108,11 @@ class Instructor:
             self.validation_tran_indices = self.dataset.validation_tran_indices
             self.validation_span_indices = self.dataset.validation_span_indices
         
-        if args.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto' ]:
+        if args.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
             self.train_VDC_info = self.dataset.train_VDC_info.to(args.device)
-            self.train_sgg_info = self.dataset.train_sgg_info.to(args.device)
             self.eval_VDC_info = self.dataset.eval_VDC_info.to(args.device)
-            self.eval_sgg_info = self.dataset.eval_sgg_info.to(args.device)
             
             if task_name == 'mams':
                 self.validation_extended_attention_mask = self.dataset.validation_extended_attention_mask.to(args.device)
@@ -139,6 +137,8 @@ class Instructor:
             self.model = RobertaForSequenceClassification.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_TD:
             self.model = RobertaForSequenceClassification_TD.from_pretrained('roberta-base')
+        elif args.model_class == RobertaForSequenceClassification_TD_t_star:
+            self.model = RobertaForSequenceClassification_TD_t_star.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_gcls:
             self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base', g_pooler = args.g_pooler)
         elif args.model_class == RobertaForSequenceClassification_gcls_auto:
@@ -160,6 +160,9 @@ class Instructor:
             self.init_model_state_dict = self.model.state_dict()
             
 #         #### save & load model checkpoint if necessary.
+
+        self.model = load_model_roberta_t(self.model)
+        
 #         if args.save_init_model == True:
 #             torch.save(self.model.state_dict(), self.opt.model_save_path+f'/init_seed_{args.seed}.pkl')
             
@@ -243,7 +246,7 @@ class Instructor:
             
             self.optimizer_gcn = None
         
-        elif args.model_name in ['roberta', 'roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
+        elif args.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
             VIC_params = None
             VDC_params = None
             
@@ -357,6 +360,7 @@ class Instructor:
         self.max_validation_f1_INC = 0
         self.max_validation_f1_rand = 0
         
+        self.latest_increase_epoch = 0
         self.best_L_config_acc = []
         
         self.best_L_config_f1 = []
@@ -416,9 +420,6 @@ class Instructor:
         if task_name == 'mams':
             print('# of validation_examples: ', len(self.dataset.validation_examples))
         
-        train_layer_L = self.opt.L_config_base
-        train_layer_L_set = set(train_layer_L)
-        
         for i_epoch in range(int(args.num_train_epochs)):
             if i_epoch == 5:
                 if task_name == 'tweet' and self.max_test_acc_INC < 0.70:
@@ -473,11 +474,10 @@ class Instructor:
                 elif self.opt.model_name in ['roberta_gcls_td', 'roberta_asc_td']:
                     input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
                     input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
-                elif self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
+                elif self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                     train_VDC_info = self.train_VDC_info[all_input_guids]
-                    train_sgg_info = self.train_sgg_info[all_input_guids]
                 elif self.opt.model_name in ['roberta']:
                     input_ids = input_ids.to(self.opt.device)
                 else:
@@ -493,7 +493,7 @@ class Instructor:
                     train_lcf_matrix = train_lcf_matrix.to(self.opt.device)
                 
                 if self.global_step % 100 == 0:
-                    if self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
+                    if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
                         print('guid: ', all_input_guids[0])
@@ -522,13 +522,15 @@ class Instructor:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
-                    loss, logits = self.model(input_ids, labels = label_ids, extended_attention_mask = 
-                                              train_extended_attention_mask)[:2]
+                    loss, logits = self.model(input_ids, labels = label_ids, VDC_info = train_VDC_info)[:2]
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_TD_t_star]:
+                    loss, logits = self.model(input_ids, labels = label_ids, VDC_info = train_VDC_info)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     sg_loss, output_ = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = train_extended_attention_mask, 
-                                              VDC_info = train_VDC_info, sg_output = False)[:2]
+                                              VDC_info = train_VDC_info)[:2]
                     
                     loss, logits = output_[:2]
 #                     loss = loss + max(0, 0.2 - sum(sg_loss)/len(sg_loss))
@@ -536,15 +538,14 @@ class Instructor:
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
                     _, sg_loss, output_ = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = train_extended_attention_mask, 
-                                              VDC_info = train_VDC_info, automation_visualization = False, sg_output = False, 
+                                              VDC_info = train_VDC_info, automation_visualization = False, 
                                               )
                     loss, logits = output_[:2]
                     
 #                     loss = loss + max(0, 0.5 - sg_loss[11])
                 
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              train_layer_L)
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask)
                     
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
@@ -640,10 +641,11 @@ class Instructor:
                     if task_name == 'mams':
                         result, validation_increased = self.do_eval('validation')
                         if validation_increased:
+                            self.latest_increase_epoch = i_epoch
                             print('='*77)
                             print('Validation increased... testing on the test set')
                             print('='*77)
-                            test_result = self.do_eval()
+                            test_result, _ = self.do_eval()
                             print('-'*77)
                             print(f"Test results => Acc: {test_result['eval_accuracy']}, f1: {test_result['eval_f1']}")
                             print('-'*77)
@@ -652,6 +654,8 @@ class Instructor:
                             self.last_test_epoch = i_epoch
                     else:
                         result, validation_increased = self.do_eval(eval_sg_output = False)
+                        if validation_increased:
+                            self.latest_increase_epoch = i_epoch
                                 
                     tr_loss = tr_loss / nb_tr_steps
 #                     self.scheduler.step(result['eval_accuracy'])
@@ -669,12 +673,12 @@ class Instructor:
                         sys.exit()
                     if task_name == 'mams':
                         print(
-                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f} | last_test_acc: {10:.6f} | last_test_f1: {11:.6f} | last_test_epoch: {12:.6f} ".format(
-                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC, self.last_test_acc, self.last_test_f1, self.last_test_epoch))
+                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f} | last_test_acc: {10:.6f} | last_test_f1: {11:.6f} | last_test_epoch: {12:.6f} | latest_increase_epoch: {13:.1f}".format(
+                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC, self.last_test_acc, self.last_test_f1, self.last_test_epoch, self.latest_increase_epoch))
                     else:
                         print(
-                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
-                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC))
+                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f} | latest_increase_epoch: {8:.1f}".format(
+                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC, self.latest_increase_epoch))
                     
                         
                         
@@ -685,9 +689,6 @@ class Instructor:
         # confidence = []
         y_pred = []
         y_true = []
-        
-        layer_L = self.opt.L_config_base
-        layer_L_set = set(layer_L)
         
         if data_type == 'validation':
             d_loader = self.dataset.validation_dataloader
@@ -705,7 +706,7 @@ class Instructor:
             # batch = tuple(t.to(self.opt.device) for t in batch)
             input_ids, label_ids, all_input_guids = batch
                 
-            if self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
+            if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
                 input_ids = input_ids.to(self.opt.device)
                 if data_type == 'validation':
                     extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
@@ -713,7 +714,6 @@ class Instructor:
                 else:
                     extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
                     eval_VDC_info = self.eval_VDC_info[all_input_guids]
-                    eval_sgg_info = self.eval_sgg_info[all_input_guids]
                     
             elif self.opt.model_name in ['roberta']:
                 input_ids = input_ids.to(self.opt.device)
@@ -736,12 +736,15 @@ class Instructor:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
-                    loss, logits = self.model(input_ids, labels = label_ids, extended_attention_mask = extended_att_mask)[:2]
+                    loss, logits = self.model(input_ids, labels = label_ids, VDC_info = eval_VDC_info )[:2]
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_TD_t_star]:
+                    loss, logits = self.model(input_ids, labels = label_ids, VDC_info = eval_VDC_info )[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     sg_loss, output_ = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = extended_att_mask,
-                                              VDC_info = eval_VDC_info, sg_output = eval_sg_output)[:2]
+                                              VDC_info = eval_VDC_info)[:2]
                     
                     loss, logits = output_[:2]
                     
@@ -885,7 +888,7 @@ class Instructor:
             if eval_accuracy > self.max_test_acc_INC:
                 validation_increased = True
                 self.max_test_acc_INC = eval_accuracy
-                if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
+                if self.max_test_acc_INC > 0.85 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
                     print('='*77)
                     print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
@@ -893,7 +896,7 @@ class Instructor:
             if test_f1 > self.max_test_f1_INC:
                 validation_increased = True
                 self.max_test_f1_INC = test_f1
-                if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
+                if self.max_test_f1_INC > 0.815 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
                     print('='*77)
                     print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
@@ -1041,6 +1044,7 @@ if __name__ == "__main__":
         'fc': BertForSequenceClassification,
         'roberta': RobertaForSequenceClassification,
         'roberta_td': RobertaForSequenceClassification_TD,
+        'roberta_td_t_star': RobertaForSequenceClassification_TD_t_star,
         'roberta_gcls': RobertaForSequenceClassification_gcls,
         'roberta_gcls_auto': RobertaForSequenceClassification_gcls_auto,
         'clstm': CLSTM,
