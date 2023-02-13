@@ -63,10 +63,10 @@ class ReadData:
         absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta.pkl', 'rb'))
         opt.edge_size=len(absa_dataset.edgevocab)
         
-        self.train_data_loader = BucketIterator_2(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True)
-        self.test_data_loader = BucketIterator_2(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False)
+        self.train_data_loader = BucketIterator_2(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True, input_format = self.opt.input_format)
+        self.test_data_loader = BucketIterator_2(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format)
         if opt.task_name == 'mams':
-            self.eval_data_loader = BucketIterator_2(data=absa_dataset.validation_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False)
+            self.eval_data_loader = BucketIterator_2(data=absa_dataset.validation_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format)
         
         self.DGEDT_train_data = self.train_data_loader.data
         self.DGEDT_train_batches = self.train_data_loader.batches
@@ -78,16 +78,16 @@ class ReadData:
             self.DGEDT_validation_data = self.eval_data_loader.data
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
-        if opt.model_name in ['roberta', 'roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
+        if opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
             
             if opt.graph_type == 'dg':
-                self.train_gcls_attention_mask = self.process_DG(self.DGEDT_train_data, self.opt.L_config_base, 
+                self.train_gcls_attention_mask, train_cumul_DG_words, train_total_tokens = self.process_DG(self.DGEDT_train_data, self.opt.L_config_base, 
                                                                  path_types = self.opt.path_types)
-                self.eval_gcls_attention_mask = self.process_DG(self.DGEDT_test_data, self.opt.L_config_base, 
+                self.eval_gcls_attention_mask, eval_cumul_DG_words, eval_total_tokens = self.process_DG(self.DGEDT_test_data, self.opt.L_config_base, 
                                                                  path_types = self.opt.path_types)
                 if opt.task_name == 'mams':
-                    self.validation_gcls_attention_mask = self.process_DG(self.DGEDT_validation_data, self.opt.L_config_base, 
-                                                                 path_types = self.opt.path_types)
+                    self.validation_gcls_attention_mask, validation_cumul_DG_words, validation_total_tokens \
+                    = self.process_DG(self.DGEDT_validation_data, self.opt.L_config_base, path_types = self.opt.path_types)
                 
             elif opt.graph_type == 'sd':
                 self.train_gcls_attention_mask  = self.process_surface_distance(self.DGEDT_train_data, self.opt.L_config_base)
@@ -99,33 +99,35 @@ class ReadData:
         ######################
         
         self.train_data, self.train_dataloader, self.train_tran_indices, self.train_span_indices, \
-        self.train_extended_attention_mask, self.train_VDC_info  = self.get_data_loader(examples=self.train_examples, 
-                                                                                        type='train_data', gcls_attention_mask =
-                                                                                        self.train_gcls_attention_mask, 
-                                                                                        path_types = self.opt.path_types)
+        self.train_extended_attention_mask, self.train_VDC_info, self.train_sgg_info  = self.get_data_loader(examples=self.train_examples, type='train_data', gcls_attention_mask =self.train_gcls_attention_mask,
+                     path_types = self.opt.path_types, cumul_DG_words = train_cumul_DG_words, total_tokens = train_total_tokens
+                                                                                                            )
         
         self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices, \
-        self.eval_extended_attention_mask, self.eval_VDC_info = self.get_data_loader(examples=self.eval_examples, 
-                                                                                     type='eval_data', gcls_attention_mask = 
-                                                                                     self.eval_gcls_attention_mask, 
-                                                                                     path_types = self.opt.path_types)
+        self.eval_extended_attention_mask, self.eval_VDC_info , self.eval_sgg_info = self.get_data_loader(examples=self.eval_examples, type='eval_data', gcls_attention_mask = self.eval_gcls_attention_mask, 
+                     path_types = self.opt.path_types, cumul_DG_words = eval_cumul_DG_words, total_tokens = eval_total_tokens)
         if opt.task_name == 'mams':
             self.validation_data, self.validation_dataloader, self.validation_tran_indices, self.validation_span_indices, \
-            self.validation_extended_attention_mask, self.validation_VDC_info = self.get_data_loader(examples=self.validation_examples, type='validation',gcls_attention_mask = self.validation_gcls_attention_mask,path_types = self.opt.path_types)
+            self.validation_extended_attention_mask, self.validation_VDC_info, self.validation_sgg_info = self.get_data_loader(examples=self.validation_examples, type='validation',gcls_attention_mask = self.validation_gcls_attention_mask,path_types = self.opt.path_types, cumul_DG_words = validation_cumul_DG_words, total_tokens = validation_total_tokens)
             
                   
     def process_DG(self, DGEDT_train_data, layer_L, path_types = None):
         length_R_trans = {}
         cumul_R_trans = {}
+        cumul_DG_words = {}
         total_tokens = [] # Used for doing DG analysis
         
-        gcls_attention_mask = torch.zeros((len(DGEDT_train_data), 5+1, path_types, 128), dtype=torch.float)
+        self.max_VDC = 11
+        
+        gcls_attention_mask = torch.zeros((len(DGEDT_train_data), self.max_VDC+1, path_types, 128), dtype=torch.float)
         for i in range(len(DGEDT_train_data)):
             length_R_trans[i] = {}
             cumul_R_trans[i] = {}
-            for j in range(5+1):
+            cumul_DG_words[i] = {}
+            for j in range(self.max_VDC+1):
                 length_R_trans[i][j] = {}
                 cumul_R_trans[i][j] = {}
+                cumul_DG_words[i][j] = []
                 for k in range(min(2**j, path_types)):
                     length_R_trans[i][j][k] = []
                     cumul_R_trans[i][j][k] = []
@@ -137,79 +139,60 @@ class ReadData:
             dg[dg>=1] = 1
             dg_in = DGEDT_train_data[i]['dependency_graph'][0]
             dg_out = DGEDT_train_data[i]['dependency_graph'][1]
-            
             dg = torch.tensor(dg)
             dg_in = torch.tensor(dg_in)
             dg_out = torch.tensor(dg_out)
             
             sep_pos = len(DGEDT_train_data[i]['text_indices']) 
+            
             total_tokens.append(sep_pos-2)
+            
+            assert len(DGEDT_train_data[i]['dependency_graph'][0]) <= sep_pos -2
             
             if len(DGEDT_train_data[i]['span_indices']) != 1:
                 print('Multiple same aspects in the sentence : ', i)
 #             assert len(DGEDT_train_data[i]['span_indices']) == 1    # At least for Laptop and Restaurant.
             
             length_0_trans = []
+            
             for k in range(len(DGEDT_train_data[i]['span_indices'])):
+#                 if k == 1:
+#                     break
                 tran_start = DGEDT_train_data[i]['span_indices'][k][0]
                 tran_end = DGEDT_train_data[i]['span_indices'][k][1]
-
+                
                 for item in range(tran_start, tran_end):
                     length_R_trans[i][0][0].append([item])
                     cumul_R_trans[i][0][0].append([item])
                     length_0_trans.append(item)
+                    cumul_DG_words[i][0].append(item)
             
             used_trans = []
-            for l in range(1, 5+1):
-                #######
-                for j in range(min(2**(l-1), path_types)):
-                    if 2**l <= path_types:
-                        for k in range(2):
-                            if k == 0:
-                                dg_ = dg_in
-                            else:
-                                dg_ = dg_out
-                            
-                            cumul_R_trans[i][l][2*j+k] = cumul_R_trans[i][l-1][j].copy()
-                            
-                            for path in length_R_trans[i][l-1][j]:
-                                last_node = path[-1]
-                                if len(path) > 1:
-                                    prev_node = path[-2]
-                                else:
-                                    prev_node = None
-
-                                x = (dg_[last_node] == 1).nonzero(as_tuple=True)[0]
-                                
-                                for item in x:
-                                    if int(item) not in length_0_trans:
-                                        if path_types == 1:    # path_types = 1 인 경우는 언제나 최단 경로를 선택하기 위함.
-                                            if int(item) in used_trans:
-                                                continue
-                                        if int(item) != last_node and int(item) != prev_node:
-                                                length_R_trans[i][l][2*j+k].append(path+[int(item)])
-                                                cumul_R_trans[i][l][2*j+k].append(path+[int(item)])
-                                                used_trans.append(int(item))
+            for l in range(1, self.max_VDC+1):
+                dg_ = dg
+                cumul_R_trans[i][l][0] = cumul_R_trans[i][l-1][0].copy()
+                cumul_DG_words[i][l] = cumul_DG_words[i][l-1].copy()
+                
+                for path in length_R_trans[i][l-1][0]:
+                    last_node = path[-1]
+                    if len(path) > 1:
+                        prev_node = path[-2]
                     else:
-                        dg_ = dg
-                        cumul_R_trans[i][l][j] = cumul_R_trans[i][l-1][j].copy()
-                        for path in length_R_trans[i][l-1][j]:
-                            last_node = path[-1]
-                            if len(path) > 1:
-                                prev_node = path[-2]
-                            else:
-                                prev_node = None
+                        prev_node = None
 
-                            x = (dg_[last_node] == 1).nonzero(as_tuple=True)[0]
-                            for item in x:
-                                if int(item) not in length_0_trans:
-                                    if path_types == 1:
-                                        if int(item) in used_trans:
-                                            continue
-                                    if int(item) != last_node and int(item) != prev_node:
-                                            length_R_trans[i][l][j].append(path+[int(item)])
-                                            cumul_R_trans[i][l][j].append(path+[int(item)])
-                                            used_trans.append(int(item))
+                    x = (dg_[last_node] == 1).nonzero(as_tuple=True)[0]
+                    assert last_node <= len(dg_)
+                    
+                    for item in x:
+                        if int(item) not in length_0_trans:
+                            if path_types == 1:
+                                if int(item) in used_trans:
+                                    continue
+                            if int(item) != last_node and int(item) != prev_node:
+                                    length_R_trans[i][l][0].append(path+[int(item)])
+                                    cumul_R_trans[i][l][0].append(path+[int(item)])
+                                    cumul_DG_words[i][l].append(int(item))
+                                    used_trans.append(int(item))
                                             
             
             ## 점검
@@ -218,13 +201,33 @@ class ReadData:
                     for item in length_R_trans[i][j][k]:
                         assert len(item) == j+1
             
+            
+            ## 몇 개 선택해서 점검 진행.
+#             if len(cumul_DG_words[i][5]) != len(dg) and len(dg) < 20:
+#                 print('='*77)
+#                 print('i: ', i)
+#                 print('dg: ', dg)
+#                 print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'])))
+#                 print('target: ', tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['aspect_indices'])))
+#                 print('len(dg): ', len(dg))
+#                 print('-'*77)
+#                 for j in range(len(cumul_DG_words[i])):
+#                     print(f'Length {j} trans: ', len(cumul_DG_words[i][j]))
+#                     print('words: ', cumul_DG_words[i][j])
+#                     for item in cumul_DG_words[i][j]:
+#                         start = DGEDT_train_data[i]['tran_indices'][item][0]+1
+#                         end = DGEDT_train_data[i]['tran_indices'][item][1]+1
+#                         print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'][start:end])))
+#                     print('-'*77)
+                
+            
             # Converting to gcls_att_mask. 
             aspect_length = len(DGEDT_train_data[i]['aspect_indices']) - 2
             if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_auto']:
-                A =2 
+                A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
-            elif self.opt.model_name in ['roberta_td', 'roberta', 'roberta_fm']:
+            elif self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta', 'roberta_fm']:
                 A = 1
             
             # target_idx
@@ -247,22 +250,36 @@ class ReadData:
 
         print('='*77)
         print('reporting DG statistics')
+        
         total_toks = 0
-        R_tokens = torch.zeros((5+1, path_types), dtype = torch.float)
+        total_trans = 0
+        self.R_tokens = torch.zeros((self.max_VDC+1, 1), dtype = torch.float)
+        self.R_trans = torch.zeros((self.max_VDC+1, 1), dtype = torch.float)
         
         for i in range(len(DGEDT_train_data)):
             total_toks += total_tokens[i]
-            for j in range(5+1):
-                for k in range(path_types):
-                    R_tokens[j,k] += torch.sum(gcls_attention_mask[i][j][k])
+            total_trans += len(DGEDT_train_data[i]['dependency_graph'][0])
+            
+            for j in range(self.max_VDC+1):
+#                 print(f'VDC {j} tokens: ', torch.sum(gcls_attention_mask[i][j][0]))
+                x = (gcls_attention_mask[i][j][0] == 1).nonzero(as_tuple=True)[0]
+#                 print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'])[x-1]))
+#                 print('-'*77)
+                self.R_tokens[j] += torch.sum(gcls_attention_mask[i][j][0])
+                self.R_trans[j] += len(cumul_DG_words[i][j])
+                
+#             for j in range(5+1):
+#                 for k in range(path_types):
+#                     R_tokens[j,k] += torch.sum(gcls_attention_mask[i][j][k])
                     
-        for i in range(5+1):
+        for i in range(self.max_VDC+1):
             print('-'*77)
             print('Range: ', i)
-            for j in range(path_types):
-                print(f'portion of tokens in range {i} / path type {j}: ', R_tokens[i][j] / total_toks)
+            print(f'portion of tokens in range {i} / path type {j}: ', self.R_tokens[i] / total_toks)
+            print(f'portion of words in range {i} / path type {j}: ', self.R_trans[i] / total_trans)
+            
                 
-        return gcls_attention_mask
+        return gcls_attention_mask, cumul_DG_words, total_tokens
 
     def process_surface_distance(self, DGEDT_train_data, layer_L):
         final_all_paths = []
@@ -293,7 +310,7 @@ class ReadData:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
-            elif self.opt.model_name in ['roberta', 'roberta_td', 'roberta_fm']:
+            elif self.opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_fm']:
                 A = 1
             
             sep_pos = len(DGEDT_train_data[i]['text_indices'])
@@ -360,7 +377,8 @@ class ReadData:
 
         return cdw_vec
 
-    def get_data_loader(self, examples, type='train_data', gcls_attention_mask=None, path_types = None):
+    def get_data_loader(self, examples, type='train_data', gcls_attention_mask=None, path_types = None, 
+                        cumul_DG_words= None, total_tokens=None):
         features = self.convert_examples_to_features(
             examples, self.label_list, self.opt.max_seq_length, self.tokenizer)
         
@@ -381,8 +399,6 @@ class ReadData:
         assert all_input_ids_org.size(0) == batch_size_
         ##############################
         all_input_ids = DGEDT_batches['text_indices']
-        all_input_ids_lcf_global = DGEDT_batches['text_indices_lcf_global']
-        all_input_ids_lcf_local = DGEDT_batches['text_indices_lcf_local']
         
         
         ##############################
@@ -392,33 +408,21 @@ class ReadData:
         all_input_mask_org = torch.tensor([f.input_mask for f in features], dtype=torch.long)
         ##############################
         text_len = torch.sum(DGEDT_batches['text_indices'] != 1, dim=-1)
-        text_len_lcf_global = torch.sum(DGEDT_batches['text_indices_lcf_global'] != 1, dim=-1)
-        text_len_lcf_local = torch.sum(DGEDT_batches['text_indices_lcf_local'] != 1, dim=-1)
         
         
         all_input_mask = length2mask(text_len, DGEDT_batches['text_indices'].size(1))
-        all_input_mask_lcf_global = length2mask(text_len, DGEDT_batches['text_indices_lcf_global'].size(1))
-        all_input_mask_lcf_local = length2mask(text_len, DGEDT_batches['text_indices_lcf_local'].size(1))
         
         all_segment_ids_org = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
         ##############################
         all_segment_ids = all_segment_ids_org  # all zeroes of size 128.
-        all_segment_ids_lcf_global = all_segment_ids_org
-        all_segment_ids_lcf_local = all_segment_ids_org
         
         ########## When target is appended at the end or the beginning.
         for i in range(batch_size_):
             x = (all_input_ids[i] == 2).nonzero(as_tuple=True)[0]
             all_segment_ids[i][x[0]+1:x[-1]+1] = 1
             
-            x = (all_input_ids_lcf_global[i] == 2).nonzero(as_tuple=True)[0]
-            all_segment_ids_lcf_global[i][x[0]+1:x[-1]+1] = 1
-            
-            x = (all_input_ids_lcf_local[i] == 2).nonzero(as_tuple=True)[0]
-            all_segment_ids_lcf_global[i][x[0]+1:x[-1]+1] = 1
-            # lcf_local -> 전부 0.
-            
         ##########
+        
     
         all_label_ids_org = torch.tensor([f.label_id for f in features], dtype=torch.long)
         ##############################
@@ -522,18 +526,6 @@ class ReadData:
         all_input_dg2 = DGEDT_batches['dependency_graph2']
         all_input_dg3 = DGEDT_batches['dependency_graph3']
         
-        ###### Making LCF matrices
-        lcf_vec_list = []
-        for j in range(batch_size_):
-            aspect_start_idx = DGEDT_batches['tran_indices'][j][DGEDT_batches['span_indices'][j][0][0]][0] + 1
-            lcf_vec_list.append(self.get_cdw_vec(local_indices=all_input_ids_lcf_local[j], 
-                                                 aspect_indices=all_input_t_ids[j], aspect_begin=aspect_start_idx,
-                                                 syntactical_dist=None))
-
-#         lcf_vec = torch.tensor(lcf_vec_list, dtype=torch.long)
-
-
-        ###############################
         extended_attention_mask = torch.zeros([all_input_ids.size(0),1,1,128])    # torch.Size([32, 1, 1, 128])
         print('extended_attention_mask.size() should be [N,1,1,128] ', extended_attention_mask.size())
         extended_attention_mask = extended_attention_mask.repeat(1,1,all_input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
@@ -544,7 +536,7 @@ class ReadData:
 
         # VDC_info: for VDC-automation
         VDC_info = torch.full([all_input_ids.size(0), 128], 0) 
-        
+        sgg_info = torch.full([all_input_ids.size(0)], 0)
         
         g_config = []
         if len(self.opt.g_config) == 4:
@@ -561,87 +553,111 @@ class ReadData:
                     g_config.append(torch.tensor([[self.opt.g_config[4], self.opt.g_config[5]],
                                                   [self.opt.g_config[6], self.opt.g_config[7]]], dtype = torch.float))
         
+        new_VDC_K = []
+        print('='*77)
+        print('VDC threshold: ', self.opt.VDC_threshold)
         for i in range(all_input_ids.size(0)):
             for item in reversed(range(self.opt.auto_VDC_k+1)):
                 VDC_info[i][gcls_attention_mask[i][item][0] == 1] = item+1
                 
-            VDC_info = VDC_info.long()
+                #### first token pooling 용
+#                 x = (gcls_attention_mask[i][item][0] == 1).nonzero(as_tuple=True)[0]
+#                 VDC_info[i][x[0]] = item+1
                 
-            if i % 300 == 0 and type=='train_data':
+#             y = (VDC_info[i] == 1).nonzero(as_tuple=True)[0]
+#             assert len(y) == 1
+                ####
+                
+            x = (all_input_ids[i] == 50249).nonzero(as_tuple=True)[0]
+#             sgg_info[i] = x[0]
+                
+            VDC_info = VDC_info.long()
+            sgg_info = sgg_info.long()
+            
+            if i % 300 == 0 and type == 'train_data':
                 print('='*77)
-                print('all_input_guids[i]: ', all_input_guids[i])
-                x = (all_input_ids[i] == 1).nonzero(as_tuple=True)[0]
-                print('all_input_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_ids[i][:x[0]]))
-                print('-'*77)
-                x = (all_input_t_ids[i] == 1).nonzero(as_tuple=True)[0]
-                print(x)
-                print('all_input_t_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_t_ids[i][:x[0]]))
-                print('VDC_info[i]: ', VDC_info[i])
-                x = (VDC_info[i] == 1).nonzero(as_tuple=True)
-                print('target tokens according to VDC_info: ', 
-                      tokenizer.convert_ids_to_tokens(all_input_ids[i][x[0]])) 
-                print('-'*77)
+#                 print('sgg_info[i]: ', sgg_info[i])
+#                 print('tokens according to sgg_info: ', tokenizer.convert_ids_to_tokens(all_input_ids[i][sgg_info[i]:sgg_info[i]+1]))
+                
+#             if i % 300 == 0 and type=='train_data':
+#                 print('='*77)
+#                 print('all_input_guids[i]: ', all_input_guids[i])
+#                 x = (all_input_ids[i] == 1).nonzero(as_tuple=True)[0]
+#                 print('all_input_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_ids[i][:x[0]]))
+#                 print('-'*77)
+#                 x = (all_input_t_ids[i] == 1).nonzero(as_tuple=True)[0]
+#                 print(x)
+#                 print('all_input_t_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_t_ids[i][:x[0]]))
+#                 print('VDC_info[i]: ', VDC_info[i])
+#                 x = (VDC_info[i] == 1).nonzero(as_tuple=True)
+#                 print('target tokens according to VDC_info: ', 
+#                       tokenizer.convert_ids_to_tokens(all_input_ids[i][x[0]])) 
+#                 print('-'*77)
                 
 #                 raw file을 불러오고 i 번째 가지고 와서 spacy 가하면 될 듯?
 #                 여기에 실제 데이터 raw 보여주고, aspect 보여주고 spacy 했을 때 그림 결과 보여주게끔 코드를 보여주기.
                 
-            for j, item in enumerate(self.opt.L_config_base):
-#                 extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-
-#                 extended_attention_mask[i, j, 0, 0, 0] = (1-g_config[j][0][0]) * -10000.0
-#                 extended_attention_mask[i, j, 0, 0, self.opt.gcls_pos] = (1-g_config[j][0][1]) * -10000.0
-#                 extended_attention_mask[i, j, 0, self.opt.gcls_pos, 0] = (1-g_config[j][1][0]) * -10000.0
-#                 extended_attention_mask[i, j, 0, self.opt.gcls_pos, self.opt.gcls_pos] = (1-g_config[j][1][1]) * -10000.0
-
+            
+            #### VDC as a function of the input data.
+            for ii in range(self.max_VDC+1):
+                if len(cumul_DG_words[i][ii])/total_tokens[i] > self.opt.VDC_threshold:
+                    new_VDC_K.append(ii)
+                    break
+                if ii == self.max_VDC:
+                    new_VDC_K.append(ii)
+                   
+            if new_VDC_K[i] == 0:
+                new_VDC_k = [0] * 12
+            elif new_VDC_K[i] == 1:
+                new_VDC_k = [0,0,0,0,0,0,1,1,1,1,1,1]
+            elif new_VDC_K[i] == 2:
+                new_VDC_k = [0,0,0,0,1,1,1,1,2,2,2,2]
+            elif new_VDC_K[i] == 3:
+                new_VDC_k = [0,0,0,1,1,1,2,2,2,3,3,3]
+            elif new_VDC_K[i] == 4:
+                new_VDC_k = [0,0,0,0,2,2,2,2,4,4,4,4]
+            elif new_VDC_K[i] == 5:
+                new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,5]
+            elif new_VDC_K[i] == 6:
+                new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,6]
+            elif new_VDC_K[i] == 7:
+                new_VDC_k = [0,0,1,1,2,2,3,3,4,5,6,7]
+            elif new_VDC_K[i] == 8:
+                new_VDC_k = [0,0,1,1,2,2,3,4,5,6,7,8]
+            elif new_VDC_K[i] == 9:
+                new_VDC_k = [0,0,1,1,2,3,4,5,6,7,8,9]
+            elif new_VDC_K[i] == 10:
+                new_VDC_k = [0,0,1,2,3,4,5,6,7,8,9,10]
+            elif new_VDC_K[i] == 11:
+                new_VDC_k = [0,1,2,3,4,5,6,7,8,9,10,11]
+                
+#             new_VDC_k = [0,0,0,1,1,1,2,2,2,3,3,3] # ssss
+                
+            # decreasing VDC
+#             new_VDC_k = [new_VDC_k[11-i] for i in range(12)]
+            
+            
+            
+            for j, item in enumerate(new_VDC_k):
                 if self.opt.graph_type == 'dg':
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
+                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
+                    
                 elif self.opt.graph_type == 'sd':
                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
 
-
-#                 if item == 2 and self.opt.path_types >= 4:
-#                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
-#                     extended_attention_mask[i, j, 3, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
-#                     extended_attention_mask[i, j, 6, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
-#                     extended_attention_mask[i, j, 9, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
-
-#                     extended_attention_mask[i, j, 1, 1, :] =  (1 - gcls_attention_mask[i][item][2]) * -10000.0
-#                     extended_attention_mask[i, j, 4, 1, :] =  (1 - gcls_attention_mask[i][item][2]) * -10000.0
-#                     extended_attention_mask[i, j, 7, 1, :] =  (1 - gcls_attention_mask[i][item][2]) * -10000.0
-#                     extended_attention_mask[i, j, 10, 1, :] =  (1 - gcls_attention_mask[i][item][2]) * -10000.0
-
-#                     extended_attention_mask[i, j, 2, 1, :] =  (1 - gcls_attention_mask[i][item][3]) * -10000.0
-#                     extended_attention_mask[i, j, 5, 1, :] =  (1 - gcls_attention_mask[i][item][3]) * -10000.0
-#                     extended_attention_mask[i, j, 8, 1, :] =  (1 - gcls_attention_mask[i][item][3]) * -10000.0
-#                     extended_attention_mask[i, j, 11, 1, :] =  (1 - gcls_attention_mask[i][item][3]) * -10000.0
-
-#                 elif item == 3 and self.opt.path_types >= 8:
-#                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
-#                     extended_attention_mask[i, j, 4, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
-#                     extended_attention_mask[i, j, 8, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
-
-#                     extended_attention_mask[i, j, 1, 1, :] =  (1 - gcls_attention_mask[i][item][4]) * -10000.0
-#                     extended_attention_mask[i, j, 5, 1, :] =  (1 - gcls_attention_mask[i][item][4]) * -10000.0
-#                     extended_attention_mask[i, j, 9, 1, :] =  (1 - gcls_attention_mask[i][item][4]) * -10000.0
-
-#                     extended_attention_mask[i, j, 2, 1, :] =  (1 - gcls_attention_mask[i][item][6]) * -10000.0
-#                     extended_attention_mask[i, j, 6, 1, :] =  (1 - gcls_attention_mask[i][item][6]) * -10000.0
-#                     extended_attention_mask[i, j, 10, 1, :] =  (1 - gcls_attention_mask[i][item][6]) * -10000.0
-
-#                     extended_attention_mask[i, j, 3, 1, :] =  (1 - gcls_attention_mask[i][item][7]) * -10000.0
-#                     extended_attention_mask[i, j, 7, 1, :] =  (1 - gcls_attention_mask[i][item][7]) * -10000.0
-#                     extended_attention_mask[i, j, 11, 1, :] =  (1 - gcls_attention_mask[i][item][7]) * -10000.0
-
-#                 else:
-#                     for t in range(min(2**item, path_types)):
-#                         extended_attention_mask[i, j, (int(12/min(2**item, path_types)))*t:int((12/min(2**item, path_types)))*(t+1), 1, :] =  (1 - gcls_attention_mask[i][item][t]) * -10000.0
-
                 extended_attention_mask[i, j, :, 0, 0] = (1-g_config[j][0][0]) * -10000.0
-                extended_attention_mask[i, j, :, 0, self.opt.g_token_pos] = (1-g_config[j][0][1]) * -10000.0
-                extended_attention_mask[i, j, :, self.opt.g_token_pos, 0] = (1-g_config[j][1][0]) * -10000.0
-                extended_attention_mask[i, j, :, self.opt.g_token_pos, self.opt.g_token_pos] = (1-g_config[j][1][1]) * -10000.0
+                extended_attention_mask[i, j, :, 0, 1] = (1-g_config[j][0][1]) * -10000.0
+                extended_attention_mask[i, j, :, 1, 0] = (1-g_config[j][1][0]) * -10000.0
+                extended_attention_mask[i, j, :, 1, 1] = (1-g_config[j][1][1]) * -10000.0
                 
-                
+        
+        print('new_VDC_K statistics: ')
+        max_k = max(new_VDC_K)
+        for jj in range(max_k+1):
+            print(f'VDC={jj}: {100*float(sum(torch.tensor(new_VDC_K) == jj)/len(new_VDC_K))}%')  
+        
+        
+        
         ###############################
 
 #         data = TensorDataset(all_input_ids, all_graph_s_pos, all_input_ids_lcf_global, all_input_ids_lcf_local, all_input_mask, 
@@ -658,11 +674,11 @@ class ReadData:
         if type == 'train_data':
             train_data = data
             train_sampler = RandomSampler(data)
-            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info
+            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info, sgg_info
         else:
             eval_data = data
             eval_sampler = SequentialSampler(eval_data)
-            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info
+            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info, sgg_info
 
     def convert_examples_to_features(self, examples, label_list, max_seq_length, tokenizer):
         """Loads a data file into a list of `InputBatch`s."""
