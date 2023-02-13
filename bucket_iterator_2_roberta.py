@@ -10,13 +10,17 @@ from transformers import RobertaTokenizer
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 
 class BucketIterator_2(object):
-    def __init__(self, data, batch_size, max_seq_length, other=None, sort_key='text_indices', shuffle=True, sort=False):
+    def __init__(self, data, batch_size, max_seq_length, other=None, sort_key='text_indices', shuffle=True, sort=False,
+                 input_format = None):
         self.shuffle = shuffle
         self.sort = sort
         self.sort_key = sort_key
         self.batch_size=batch_size
+        self.input_format = input_format
         
         self.data=[item for item in data if len(item['text_indices'])<110 ]
+        print('len(data): ', len(data))
+        print('len(self.data): ', len(self.data))
         self.max_seq_length = max_seq_length
         
         dg_max_len = max([len(t['tran_indices']) for t in self.data])
@@ -49,8 +53,6 @@ class BucketIterator_2(object):
 
     def pad_data(self, batch_data, max_seq_length, other_data=None, global_max_len1 = None):
         batch_text_indices = []
-        batch_text_indices_lcf_global = []
-        batch_text_indices_lcf_local = []
         
         batch_context_indices = []
         batch_aspect_indices = []
@@ -81,32 +83,39 @@ class BucketIterator_2(object):
                 item['text_indices'], item['context_indices'],item['span_indices'],item['tran_indices'], item['aspect_indices'], item['left_indices'],\
                 item['polarity'], item['dependency_graph'],item['text'], item['aspect']
             
-            ########### Appending target at the end
-            
-            
+            ########### Modifying the input based on self.input_format
             # RoBERTa-TD
-#             text_indices_copy = text_indices.copy()
-#             text_indices = text_indices  + [2] + aspect_indices[1:]
-#             text_indices = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+            if self.input_format == None:
+                pass
+            elif self.input_format == 'target is X':
+                text_indices_copy = text_indices.copy()
+                text_indices = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+            elif self.input_format == 'td_X':
+                text_indices_copy = text_indices.copy()
+                # for roberta_td
+                text_indices = text_indices  + [2] + aspect_indices[1:]
+                
+            elif self.input_format == 'X':
+                text_indices_copy = text_indices.copy()
+                # for roberta_td
+#                 text_indices = text_indices  + [2] + aspect_indices[1:]
+                
+                # for roberta_gcls
+                text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + aspect_indices[1:]
             
-#             text_indices_lcf_global = text_indices_copy
-#             text_indices_lcf_local = text_indices_copy
-            
-            ############# RoBERTa-gcls-td
-#             text_indices_copy = text_indices.copy()
-            # global
-#             text_indices_lcf_global = [0] + text_indices_copy
-#             text_indices_lcf_global = [0] + text_indices_copy + [2] + aspect_indices[1:]
-#             text_indices_lcf_global = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
-            
-            # local
-#             text_indices_lcf_local = text_indices_copy
-#             text_indices_lcf_local = text_indices_copy + [2] + aspect_indices[1:]
-#             text_indices_lcf_local = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+            elif self.input_format == 'gX':
+                text_indices_copy = text_indices.copy()
+                sent = ' '
+                for item in aspect:
+                    sent += ' '
+                    sent += item
 
-            ############# RoBerta-gcls
-            text_indices_copy = text_indices.copy()
-            
+                text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+                
+            elif self.input_format == 'ss':
+                text_indices_copy = text_indices.copy()
+                text_indices = [0] + [0] + text_indices_copy[1:] + [2] + aspect_indices[1:]
+                
             ######## 0. For roberta baseline
 #             sent = 'target is'
 #             for item in aspect:
@@ -115,6 +124,7 @@ class BucketIterator_2(object):
             
 #             text_indices = [0] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
             
+#             text_indices = [0] + text_indices_copy[1:]
             
             ######## 1.input format = s,s,...., target is X
             
@@ -123,31 +133,30 @@ class BucketIterator_2(object):
 #                 sent += ' '
 #                 sent += item
             
-#             text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+# #             text_indices = [0] + text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
             
+#             text_indices = [0] + text_indices_copy
             ########
             
             
-            ######## 2. input format = s,g,...., g is X
+            ######## 2. input format = s,g,...., g target is X
+#             sent = ' '
+#             for item in aspect:
+#                 sent += ' '
+#                 sent += item
             
-            sent = ' is'
-            for item in aspect:
-                sent += ' '
-                sent += item
-            
-            text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+#             text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2] 
                     
             ########
-            
-            
-            ######## 3. input format = s,g,...., target is X
+        
+            ######## 실험 1. input format = s,g,a, ... , target is X
             
 #             sent = 'target is'
 #             for item in aspect:
 #                 sent += ' '
 #                 sent += item
             
-#             text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+#             text_indices = [0] + [50249] + [50250] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
             
             ########
             
@@ -165,28 +174,64 @@ class BucketIterator_2(object):
             
             ########
             
-        
-            text_indices_lcf_global = text_indices_copy # 안 쓰임
-            text_indices_lcf_local = text_indices_copy # 안 쓰임
             
+            ######## 4. input format = s,g, ..., g, X
+#             sent = ' '
+#             for item in aspect:
+#                 sent += ' '
+#                 sent += item
+                    
+#             text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            
+            ########
+            
+            ######## 4. input format = s,g,a, ... , X
+            
+#             sent = ''
+#             for item in aspect:
+#                 if sent == '':
+#                     sent += item
+#                 else:
+#                     sent += ' '
+#                     sent += item
+                    
+#             text_indices = [0] + [50249] + [50250] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            
+            ########
+            
+            ######## 4. input format = s,g,a, ... , g, X
+            
+#             sent = ' '
+#             for item in aspect:
+#                 sent += ' '
+#                 sent += item
+                    
+#             text_indices = [0] + [50249] + [50250] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            
+            ########
+        
+            ######## 4. input format = s,g, ... , [/s] [/s] g [/s] [/s] X
+            
+#             sent = ''
+#             for item in aspect:
+#                 if sent != '':
+#                     sent += ' '
+#                     sent += item
+#                 else:
+#                     sent += item
+                    
+#             text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + [2] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+            
+            ########
             
             # pad = 1 for RoBERTa ? 
             text_padding = [1] * (max_len - len(text_indices))
-            text_padding_lcf_global = [1] * (max_len - len(text_indices_lcf_global))
-            text_padding_lcf_local = [1] * (max_len - len(text_indices_lcf_local))
-            
-#             text_padding_2 = [1] * (max_len - len(text_indices_2))
             
             context_padding = [1] * (max_len - len(context_indices))
             aspect_padding = [1] * (max_len - len(aspect_indices))
             left_padding = [1] * (max_len - len(left_indices))
             batch_span.append(span_indices)
             batch_text_indices.append(text_indices + text_padding)
-            
-            batch_text_indices_lcf_global.append(text_indices_lcf_global + text_padding_lcf_global)
-            batch_text_indices_lcf_local.append(text_indices_lcf_local + text_padding_lcf_local)
-            
-#             batch_text_indices_2.append(text_indices_2 + text_padding_2)
             
             batch_context_indices.append(context_indices + context_padding)
             batch_aspect_indices.append(aspect_indices + aspect_padding)
@@ -215,8 +260,6 @@ class BucketIterator_2(object):
                 batch_tran.append(tran_indices)
         return { \
                 'text_indices': torch.tensor(batch_text_indices), \
-                'text_indices_lcf_global': torch.tensor(batch_text_indices_lcf_global), \
-                'text_indices_lcf_local': torch.tensor(batch_text_indices_lcf_local), \
                 'text':batch_text,\
                 'aspect':batch_aspect,\
                 'context_indices': torch.tensor(batch_context_indices), \
