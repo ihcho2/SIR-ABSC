@@ -19,6 +19,11 @@ def get_config():
                         type=str,
                         required=True,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
+    parser.add_argument("--input_format",
+                        default=None,
+                        type=str,
+                        required=True,
+                        help="The input format of the data.")
     parser.add_argument("--bert_config_file",
                         default=None,
                         type=str,
@@ -26,7 +31,7 @@ def get_config():
                         help="The config json file corresponding to the pre-trained BERT model. \n"
                              "This specifies the model architecture.")
     parser.add_argument("--roberta_config_file",
-                        default=None,
+                        default='/home/ikhyuncho23/GoBERTa/roberta_files/config.json',
                         type=str,
                         required=False,
                         help="The config json file corresponding to the pre-trained BERT model. \n"
@@ -37,9 +42,9 @@ def get_config():
                         required=True,
                         help="The name of the task to train.")
     parser.add_argument("--vocab_file",
-                        default=None,
+                        default='/home/ikhyuncho23/GoBERTa/roberta_files/vocab.json',
                         type=str,
-                        required=True,
+                        required=False,
                         help="The vocabulary file that the BERT model was trained on.")
     parser.add_argument("--output_dir",
                         default='log/'+TIMESTAMP,
@@ -64,6 +69,8 @@ def get_config():
     parser.add_argument("--do_train",
                         default=True,
                         help="Whether to run training.")
+    parser.add_argument('--save_init_model',
+                        type= boolean_string, default = False)
     parser.add_argument("--do_eval",
                         default=True,
                         help="Whether to run eval on the dev set.")
@@ -75,13 +82,17 @@ def get_config():
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
-                        default=8,
+                        default=32,
                         type=int,
                         help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
                         default=5e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
+    parser.add_argument("--VDC_threshold",
+                        default=0.8,
+                        type=float,
+                        help="The VDC threshold.")
     parser.add_argument("--VDC_gate_lr",
                         default=0.0005,
                         type=float,
@@ -115,6 +126,14 @@ def get_config():
                         type=int,
                         default=42,
                         help="random seed for initialization")
+    parser.add_argument('--model_init_seed',
+                        type=int,
+                        default=42,
+                        help="random seed for initialization")
+    parser.add_argument('--training_seed',
+                        type=int,
+                        default=42,
+                        help="random seed for initialization")
     parser.add_argument('--num_auto_layers',
                         type=int,
                         default=1,
@@ -139,7 +158,7 @@ def get_config():
                         type=float, default=128,
                         help='Loss scaling, positive power of 2 values can improve fp16 convergence.')
     parser.add_argument('--gpu_id',
-                        default=[],
+                        default=[0],
                         type=list,
                         help=u'Enter the GPU number to specify')
 
@@ -191,7 +210,7 @@ def get_config():
                         type=str,
                         default = 's_g_concat',
                         help="The pooler type of automation, one of att, avg, max."),
-    parser.add_argument("--model_save_path", default=None ,type=str,
+    parser.add_argument("--model_save_path", default='/home/ikhyuncho23/GoBERTa/gcls_auto' ,type=str,
                         help="The output directory where the model checkpoints will be written.")
     parser.add_argument("--load_checkpoint", default=None ,type=str,
                         help="Loading the checkpoint")
