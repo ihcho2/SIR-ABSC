@@ -2137,12 +2137,25 @@ class RobertaPooler_TD(nn.Module):
         #########################
     
 #         for i in range(target_in_sent_embed.size(0)):
-#             assert torch.sum((target_in_sent_embed[i] - pooled[i])**2) < 0.000001
+#             assert torch.sum((target_in_sent_embed[i] - pooled[i])**2) < 0.000001 -> 이거 코딩 수준 실화? ㅋㅋ
         
-        pooled = self.dropout(pooled)
-        
-        pooled_output = self.dense(pooled)
+        ##### s랑 t 같이 하는거 체크하기 위해 여기에 잠깐 도입ssss
+        st_vector = torch.cat((hidden_states[:, 0].unsqueeze(1), pooled.unsqueeze(1)), dim=1)
+        cat = torch.mean(st_vector, dim = 1)
+        pooled_output = self.dense(cat)
         pooled_output = self.activation(pooled_output)
+        
+        attention_scores = torch.matmul(pooled_output.unsqueeze(1), st_vector.transpose(1,2))
+        attention_scores = attention_scores.view(-1,2)
+        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+        pooled_output = torch.matmul(attention_probs.unsqueeze(1), st_vector).view(-1, 768)
+        
+        #####
+        
+#         pooled = self.dropout(pooled)
+        
+#         pooled_output = self.dense(pooled)
+#         pooled_output = self.activation(pooled_output)
         
         return pooled_output
     
@@ -2160,7 +2173,7 @@ class RobertaPooler_gcls(nn.Module):
             self.dense_2 = nn.Linear(3*config.hidden_size, config.hidden_size)
         elif g_pooler in ['s_g_concat']:
             self.dense_2 = nn.Linear(2*config.hidden_size, config.hidden_size)
-        elif g_pooler in ['s_g_att']:
+        elif g_pooler in ['s_g_att', 's_g_t_avg']:
             self.dense_2 = nn.Linear(config.hidden_size, config.hidden_size)
         
         if self.dense_2 != None:
@@ -2221,6 +2234,34 @@ class RobertaPooler_gcls(nn.Module):
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), sgt_vector).view(-1, 768)
 #             final_output = self.activation(final_output)
+
+        elif self.g_pooler == 'g_t_avg':
+            index = VDC_info == 1
+            index = index.long()
+            mask = index.unsqueeze(2)
+            t_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            gt_vector = torch.cat((hidden_states[:, 1].unsqueeze(1), t_vector.unsqueeze(1)), dim=1)
+            cat = torch.mean(gt_vector, dim = 1)
+            pooled_output = self.dense(cat)
+            final_output = self.activation(pooled_output)
+            
+        elif self.g_pooler == 'g_t_att':
+            index = VDC_info == 1
+            index = index.long()
+            mask = index.unsqueeze(2)
+            t_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            first_second_token_tensor = torch.cat((hidden_states[:, 1].unsqueeze(1), t_vector.unsqueeze(1)), dim=1)
+            cat = torch.mean(first_second_token_tensor, dim=1)
+            pooled_output = self.dense(cat)
+            pooled_output = self.activation(pooled_output)
+            
+            attention_scores = torch.matmul(pooled_output.unsqueeze(1), first_second_token_tensor.transpose(1,2))
+            attention_scores = attention_scores.view(-1,2)
+            attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+            final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
+            
             
         elif self.g_pooler == 's_g_concat':
             first_second_token_tensor = hidden_states[:, :2].reshape(-1, 2*768)
@@ -2238,6 +2279,19 @@ class RobertaPooler_gcls(nn.Module):
             final_output = self.dropout(final_output)
             final_output = self.dense_2(final_output)
             final_output = self.activation(final_output)
+            
+        elif self.g_pooler == 's_g_t_avg':  # averaging s, g, and t_avg
+            first_second_token_tensor = hidden_states[:, :2]
+            
+            index = VDC_info == 1
+            index = index.long()
+            mask = index.unsqueeze(2)
+            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            cat = torch.cat((first_second_token_tensor, pooled.unsqueeze(1)), dim = 1)
+            cat_avg = torch.mean(cat, dim = 1)
+            pooled_output = self.dense(cat_avg)
+            pooled_output = self.dropout(pooled_output)
+            final_output = self.activation(pooled_output)
           
         elif self.g_pooler == 's_g_t_max_concat':  # concatanating s, g, and t_max
             first_second_token_tensor = hidden_states[:, :2]
