@@ -2139,7 +2139,7 @@ class RobertaPooler_TD(nn.Module):
 #         for i in range(target_in_sent_embed.size(0)):
 #             assert torch.sum((target_in_sent_embed[i] - pooled[i])**2) < 0.000001 -> 이거 코딩 수준 실화? ㅋㅋ
         
-        ##### s랑 t 같이 하는거 체크하기 위해 여기에 잠깐 도입ssss
+        ##### s랑 t 같이 하는거 체크하기 위해 여기에 잠깐 도입
         st_vector = torch.cat((hidden_states[:, 0].unsqueeze(1), pooled.unsqueeze(1)), dim=1)
         cat = torch.mean(st_vector, dim = 1)
         pooled_output = self.dense(cat)
@@ -2233,8 +2233,79 @@ class RobertaPooler_gcls(nn.Module):
             attention_scores = attention_scores.view(-1,3)
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), sgt_vector).view(-1, 768)
-#             final_output = self.activation(final_output)
+            final_output = self.activation(final_output)
+            
+        elif self.g_pooler == 's_g_t_max_att':
+            index = VDC_info == 1
+            index = index.long()
+            index_2 = (VDC_info != 1.0).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask = index.unsqueeze(2)
+            mask_2 = index_2.unsqueeze(2)
+            t_vector = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            
+            sgt_vector = torch.cat((hidden_states[:, :2], t_vector.unsqueeze(1)), dim=1)
+            cat = torch.mean(sgt_vector, dim=1)
+            pooled_output = self.dense(cat)
+            pooled_output = self.activation(pooled_output)
 
+            attention_scores = torch.matmul(pooled_output.unsqueeze(1), sgt_vector.transpose(1,2))
+            attention_scores = attention_scores.view(-1,3)
+            attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+            final_output = torch.matmul(attention_probs.unsqueeze(1), sgt_vector).view(-1, 768)
+            final_output = self.activation(final_output)
+        
+        elif self.g_pooler == 's_g_t_max':
+            index = VDC_info == 1
+            index = index.long()
+            index[:, :2] = 1 # Allows considering s and g
+            index_2 = (VDC_info != 1.0).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask = index.unsqueeze(2)
+            mask_2 = index_2.unsqueeze(2)
+            t_vector = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            
+            pooled = self.dropout(t_vector)
+        
+            pooled_output = self.dense(pooled)
+            final_output = self.activation(pooled_output)
+            
+        elif self.g_pooler == 'g_t_max':
+            index = VDC_info == 1
+            index = index.long()
+            index[:, 1] = 1 # g
+            index_2 = (VDC_info != 1.0).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask = index.unsqueeze(2)
+            mask_2 = index_2.unsqueeze(2)
+            t_vector = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            
+            pooled = self.dropout(t_vector)
+        
+            pooled_output = self.dense(pooled)
+            final_output = self.activation(pooled_output)
+            
+        elif self.g_pooler == 'g_t_max_att':
+            index = VDC_info == 1
+            index = index.long()
+            index_2 = (VDC_info != 1.0).long()*-float('inf')
+            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
+            mask = index.unsqueeze(2)
+            mask_2 = index_2.unsqueeze(2)
+            t_vector = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
+            
+            first_second_token_tensor = torch.cat((hidden_states[:, 1].unsqueeze(1), t_vector.unsqueeze(1)), dim=1)
+            cat = torch.mean(first_second_token_tensor, dim=1)
+            pooled_output = self.dense(cat)
+            pooled_output = self.activation(pooled_output)
+            
+            attention_scores = torch.matmul(pooled_output.unsqueeze(1), first_second_token_tensor.transpose(1,2))
+            attention_scores = attention_scores.view(-1,2)
+            attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+            final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
+            
+#             final_output = self.activation(final_output)
+            
         elif self.g_pooler == 'g_t_avg':
             index = VDC_info == 1
             index = index.long()
@@ -2262,7 +2333,24 @@ class RobertaPooler_gcls(nn.Module):
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
             
+#             final_output = self.dropout(final_output)
             
+        elif self.g_pooler == 's_t_att':
+            index = VDC_info == 1
+            index = index.long()
+            mask = index.unsqueeze(2)
+            t_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            first_second_token_tensor = torch.cat((hidden_states[:, 0].unsqueeze(1), t_vector.unsqueeze(1)), dim=1)
+            cat = torch.mean(first_second_token_tensor, dim=1)
+            pooled_output = self.dense(cat)
+            pooled_output = self.activation(pooled_output)
+            
+            attention_scores = torch.matmul(pooled_output.unsqueeze(1), first_second_token_tensor.transpose(1,2))
+            attention_scores = attention_scores.view(-1,2)
+            attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+            final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
+                
         elif self.g_pooler == 's_g_concat':
             first_second_token_tensor = hidden_states[:, :2].reshape(-1, 2*768)
             pooled_output = self.dense_2(first_second_token_tensor)
