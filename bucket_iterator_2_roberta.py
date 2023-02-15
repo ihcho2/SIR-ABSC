@@ -85,8 +85,11 @@ class BucketIterator_2(object):
             
             ########### Modifying the input based on self.input_format
             # RoBERTa-TD
-            if self.input_format == None:
+            if self.input_format == 'td':
                 pass
+            elif self.input_format == 'sgt_with_no_X':
+                text_indices_copy = text_indices.copy()
+                text_indices = [0] + [50249] + text_indices_copy[1:]
             elif self.input_format == 'target is X':
                 text_indices_copy = text_indices.copy()
                 text_indices = text_indices_copy + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
@@ -102,6 +105,14 @@ class BucketIterator_2(object):
                 
                 # for roberta_gcls
                 text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + aspect_indices[1:]
+            
+            elif self.input_format == 'g':
+                text_indices_copy = text_indices.copy()
+                # for roberta_td
+#                 text_indices = text_indices  + [2] + aspect_indices[1:]
+                
+                # for roberta_gcls
+                text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + [2]
             
             elif self.input_format == 'gX':
                 text_indices_copy = text_indices.copy()
