@@ -17,7 +17,6 @@ def get_config():
     parser.add_argument("--data_dir",
                         default=None,
                         type=str,
-                        required=True,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
     parser.add_argument("--input_format",
                         default=None,
@@ -142,6 +141,10 @@ def get_config():
                         type=int,
                         default=1,
                         help="how many numbers to learn for VDC automation")
+    parser.add_argument("--K",
+                        default=10,
+                        type=int,
+                        help="Total batch size for eval.")
     parser.add_argument('--gradient_accumulation_steps',
                         type=int,
                         default=1,
@@ -161,6 +164,15 @@ def get_config():
                         default=[0],
                         type=list,
                         help=u'Enter the GPU number to specify')
+    parser.add_argument("--automation_type",
+                        default=None,
+                        type=str,
+                        required=True,
+                        help="The VDC-automation type.")
+    parser.add_argument("--auto_k",
+                        default=2,
+                        type=int,
+                        help="The hyperparameter k of the Automatic VDC search algorithm.")
 
     # parser.add_argument('--model_name', default='lstm', type=str)
     parser.add_argument('--model_name', default='fc', type=str)  # Full connection model, that is, the output of bert is followed by full connection
@@ -178,10 +190,11 @@ def get_config():
     parser.add_argument('--initializer', default='xavier_uniform_', type=str)
     
     ###### By Cho & Jung
-    parser.add_argument('--L_config_base',
+    parser.add_argument('--step_threshold', type=float, default=0.5, help='threshold used for step models.')
+    parser.add_argument('--constant_vdc',
                         type=lambda s: [int(item) for item in s.split(',')],
                         default = None,
-                        help='GCLS length L for each layer.')
+                        help='VDC configuration for each layer.')
     parser.add_argument('--g_config',
                         type=lambda s: [int(item) for item in s.split(',')],
                         default = None,
@@ -191,6 +204,8 @@ def get_config():
     parser.add_argument('--VDC_auto',
                         type= boolean_string, default = False)
     parser.add_argument('--VIC_auto',
+                        type= boolean_string, default = False)
+    parser.add_argument('--embed_dense',
                         type= boolean_string, default = False)
     parser.add_argument('--head_wise',
                         type= boolean_string, default = False)
@@ -233,7 +248,7 @@ def get_config():
     parser.add_argument('--optim', choices=['sgd', 'adagrad', 'adam', 'adamax'], default='adamax', help='Optimizer: sgd, adagrad, adam or adamax.')
     parser.add_argument('--num_epoch', type=int, default=100, help='Number of total training epochs.')
     parser.add_argument('--batch_size', type=int, default=32, help='Training batch size.')
-    parser.add_argument('--log_step', type=int, default=20, help='Print log every k steps.')
+    parser.add_argument('--log_step', type=int, default=5, help='Print log every k steps.')
     parser.add_argument('--log', type=str, default='logs.txt', help='Write training log to file.')
     parser.add_argument('--save_dir', type=str, default='./saved_models', help='Root dir for saving models.')
 
