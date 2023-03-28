@@ -30,6 +30,16 @@ def length2mask(length,maxlength):
 class ReadData:
     def __init__(self, opt):
         print("load data ...")
+        if opt.task_name == 'restaurant':
+            opt.data_dir = '/home/ikhyuncho23/GoBERTa/datasets/semeval14/restaurants'
+        elif opt.task_name == 'laptop':
+            opt.data_dir = '/home/ikhyuncho23/GoBERTa/datasets/semeval14/laptops'
+        elif opt.task_name == 'tweet':
+            opt.data_dir = '/home/ikhyuncho23/GoBERTa/datasets/acl-14-short-data'
+        elif opt.task_name == 'mams':
+            opt.data_dir = '/home/ikhyuncho23/GoBERTa/datasets/MAMS-ATSA'
+            
+            
         if os.path.exists(opt.data_dir + '/train.raw'):
             train_raw = open(opt.data_dir +'/train.raw', 'r', encoding='utf-8', newline='\n', errors='ignore')
         elif os.path.exists(opt.data_dir + '/laptop_train.raw'):
@@ -78,22 +88,22 @@ class ReadData:
             self.DGEDT_validation_data = self.eval_data_loader.data
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
-        if opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
+        if opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_vdc_auto',
+                              'roberta_gcls_star', 'roberta_gcls_step']:
             
             if opt.graph_type == 'dg':
-                self.train_gcls_attention_mask, train_cumul_DG_words, train_total_tokens = self.process_DG(self.DGEDT_train_data, self.opt.L_config_base, 
-                                                                 path_types = self.opt.path_types)
-                self.eval_gcls_attention_mask, eval_cumul_DG_words, eval_total_tokens = self.process_DG(self.DGEDT_test_data, self.opt.L_config_base, 
-                                                                 path_types = self.opt.path_types)
+                self.train_gcls_attention_mask, train_cumul_DG_words, train_total_tokens = self.process_DG(self.DGEDT_train_data,
+                                                                                           path_types = self.opt.path_types)
+                self.eval_gcls_attention_mask, eval_cumul_DG_words, eval_total_tokens = self.process_DG(self.DGEDT_test_data,
+                                                                                           path_types = self.opt.path_types)
                 if opt.task_name == 'mams':
                     self.validation_gcls_attention_mask, validation_cumul_DG_words, validation_total_tokens \
-                    = self.process_DG(self.DGEDT_validation_data, self.opt.L_config_base, path_types = self.opt.path_types)
+                    = self.process_DG(self.DGEDT_validation_data,path_types = self.opt.path_types)
                 
             elif opt.graph_type == 'sd':
-                self.train_gcls_attention_mask  = self.process_surface_distance(self.DGEDT_train_data, self.opt.L_config_base)
-                self.eval_gcls_attention_mask = self.process_surface_distance(self.DGEDT_test_data, self.opt.L_config_base)
-                self.validation_gcls_attention_mask = self.process_surface_distance(self.DGEDT_validation_data, 
-                                                                                    self.opt.L_config_base)
+                self.train_gcls_attention_mask  = self.process_surface_distance(self.DGEDT_train_data)
+                self.eval_gcls_attention_mask = self.process_surface_distance(self.DGEDT_test_data)
+                self.validation_gcls_attention_mask = self.process_surface_distance(self.DGEDT_validation_data)
             
             
         ######################
@@ -111,7 +121,7 @@ class ReadData:
             self.validation_extended_attention_mask, self.validation_VDC_info, self.validation_sgg_info = self.get_data_loader(examples=self.validation_examples, type='validation',gcls_attention_mask = self.validation_gcls_attention_mask,path_types = self.opt.path_types, cumul_DG_words = validation_cumul_DG_words, total_tokens = validation_total_tokens)
             
                   
-    def process_DG(self, DGEDT_train_data, layer_L, path_types = None):
+    def process_DG(self, DGEDT_train_data, path_types = None):
         length_R_trans = {}
         cumul_R_trans = {}
         cumul_DG_words = {}
@@ -223,7 +233,7 @@ class ReadData:
             
             # Converting to gcls_att_mask. 
             aspect_length = len(DGEDT_train_data[i]['aspect_indices']) - 2
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_auto']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_step', 'roberta_gcls_vdc_auto']:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
@@ -306,7 +316,7 @@ class ReadData:
             final_all_paths.append(all_paths)
             
             # Now let's make the gcls_att_mask.
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_auto']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_vdc_auto', 'roberta_gcls_step']:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
@@ -533,13 +543,19 @@ class ReadData:
 
         extended_attention_mask = extended_attention_mask.unsqueeze(1).repeat(1,12,1,1,1)
         print('extended_attention_mask.size() should be [N,12,1,128,128] ', extended_attention_mask.size())
+        
+        if self.opt.automation_type in ['no_params', 'query', 'query_step_guide', 'SA']:
+            extended_attention_mask_extended = extended_attention_mask[:,:,:,:(self.opt.auto_k + 1),:].clone()
+            
 
         # VDC_info: for VDC-automation
         VDC_info = torch.full([all_input_ids.size(0), 128], 0) 
         sgg_info = torch.full([all_input_ids.size(0)], 0)
         
         g_config = []
-        if len(self.opt.g_config) == 4:
+        if self.opt.g_config == None:
+            g_config = [1,1,1,1]
+        elif len(self.opt.g_config) == 4:
             for i in range(12):
                 g_config.append(torch.tensor([[self.opt.g_config[0], self.opt.g_config[1]],
                                               [self.opt.g_config[2], self.opt.g_config[3]]], dtype = torch.float))
@@ -556,6 +572,8 @@ class ReadData:
         new_VDC_K = []
         print('='*77)
         print('VDC threshold: ', self.opt.VDC_threshold)
+        if self.opt.constant_vdc != None:
+            print('self.opt.constant_vdc: ', self.opt.constant_vdc)
         for i in range(all_input_ids.size(0)):
             for item in reversed(range(self.opt.auto_VDC_k+1)):
                 VDC_info[i][gcls_attention_mask[i][item][0] == 1] = item+1
@@ -631,13 +649,16 @@ class ReadData:
             elif new_VDC_K[i] == 11:
                 new_VDC_k = [0,1,2,3,4,5,6,7,8,9,10,11]
                 
-#             new_VDC_k = [0,0,0,1,1,1,2,2,2,3,3,3] # ssss
+            if self.opt.constant_vdc != None:
+                new_VDC_k = self.opt.constant_vdc # ssss
+                
+            if 'query_step' in self.opt.automation_type:
+                assert new_VDC_k == [0,1,2,3,4,5,6,7,8,9,10,11]
                 
             # decreasing VDC
 #             new_VDC_k = [new_VDC_k[11-i] for i in range(12)]
             
-            
-            
+    
             for j, item in enumerate(new_VDC_k):
                 if self.opt.graph_type == 'dg':
                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
@@ -645,11 +666,40 @@ class ReadData:
                 elif self.opt.graph_type == 'sd':
                     extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
 
-                extended_attention_mask[i, j, :, 0, 0] = (1-g_config[j][0][0]) * -10000.0
-                extended_attention_mask[i, j, :, 0, 1] = (1-g_config[j][0][1]) * -10000.0
-                extended_attention_mask[i, j, :, 1, 0] = (1-g_config[j][1][0]) * -10000.0
-                extended_attention_mask[i, j, :, 1, 1] = (1-g_config[j][1][1]) * -10000.0
+                extended_attention_mask[i, j, :, 0, 0] = (1-g_config[0]) * -10000.0
+                extended_attention_mask[i, j, :, 0, 1] = (1-g_config[1]) * -10000.0
+                extended_attention_mask[i, j, :, 1, 0] = (1-g_config[2]) * -10000.0
+                extended_attention_mask[i, j, :, 1, 1] = (1-g_config[3]) * -10000.0
                 
+                if self.opt.automation_type in ['no_params', 'query', 'SA']:
+                    for k in range(self.opt.auto_k + 1):
+                        extended_attention_mask_extended[i,j,0,k,:] = (1 - gcls_attention_mask[i][k]) * -10000.0
+                        extended_attention_mask_extended[i, j, :, k, 0] = 0.0
+                        extended_attention_mask_extended[i, j, :, k, 1] = 0.0
+                        
+                elif self.opt.automation_type in ['query_step_guide??']:
+                    if item != 11:
+                        item_ = item+1
+                    else:
+                        item = 11
+                    extended_attention_mask_extended[i,j,0,0,:] = (1 - gcls_attention_mask[i][item_]) * -10000.0
+                    extended_attention_mask_extended[i, j, :, 0, 0] = 0.0
+                    extended_attention_mask_extended[i, j, :, 0, 1] = 0.0
+                    
+                    if item == 0:
+                        item_ = 0
+                    else:
+                        item_ = item-1
+                    extended_attention_mask_extended[i,j,0,1,:] = (1 - gcls_attention_mask[i][item_]) * -10000.0
+                    extended_attention_mask_extended[i, j, :, 1, 0] = 0.0
+                    extended_attention_mask_extended[i, j, :, 1, 1] = 0.0
+                        
+                    
+        if self.opt.automation_type in ['no_params', 'query', 'query_step_guide', 'SA']:
+            extended_attention_mask = torch.cat((extended_attention_mask, extended_attention_mask_extended), dim = 3)
+            print('extended_attention_mask.size(): ', extended_attention_mask.size())
+#             assert (extended_attention_mask[:,:,0,1,:] == extended_attention_mask[:,:,0,-2,:]).all()
+                    
         
         print('new_VDC_K statistics: ')
         max_k = max(new_VDC_K)
