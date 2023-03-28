@@ -55,11 +55,21 @@ else:
         "RobertaForQuestionAnswering",
         "RobertaForSequenceClassification",
         "RobertaForSequenceClassification_TD",
+        "RobertaForSequenceClassification_TD_t_star",
         "RobertaForSequenceClassification_gcls",
+        "RobertaForSequenceClassification_gcls_star",
         "RobertaForSequenceClassification_gcls_auto",
         "RobertaForTokenClassification",
         "RobertaModel",
         "RobertaPreTrainedModel",
+    ]
+    
+    _import_structure["modeling_roberta_VDC_auto"] = [
+        "RobertaForSequenceClassification_gcls_VDC_auto",
+    ]
+    
+    _import_structure["modeling_roberta_step"] = [
+        "RobertaForSequenceClassification_gcls_step",
     ]
 
 try:
@@ -125,13 +135,23 @@ if TYPE_CHECKING:
             RobertaForQuestionAnswering,
             RobertaForSequenceClassification,
             RobertaForSequenceClassification_TD,
+            RobertaForSequenceClassification_TD_t_star,
             RobertaForSequenceClassification_gcls,
+            RobertaForSequenceClassification_gcls_star,
             RobertaForSequenceClassification_gcls_auto,
             RobertaForTokenClassification,
             RobertaModel,
             RobertaPreTrainedModel,
         )
-
+        
+        from .modeling_roberta_VDC_auto import (
+            RobertaForSequenceClassification_gcls_VDC_auto,
+        )
+        
+        from .modeling_roberta_step import (
+            RobertaForSequenceClassification_gcls_step,
+        )
+        
     try:
         if not is_tf_available():
             raise OptionalDependencyNotAvailable()
