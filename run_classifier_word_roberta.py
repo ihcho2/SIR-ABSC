@@ -23,17 +23,19 @@ from optimization import BERTAdam
 from configs import get_config
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
 from utils.data_util_roberta import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor, MamsProcessor
-from utils.save_and_load import load_model_MoE, load_model_roberta_t
+from utils.save_and_load import load_model_MoE, load_model_roberta_VDC_auto
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
 import time
 from data_utils import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_TD_t_star, RobertaForSequenceClassification_gcls_auto
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_TD_t_star, RobertaForSequenceClassification_gcls_auto, RobertaForSequenceClassification_gcls_VDC_auto, RobertaForSequenceClassification_gcls_m1, RobertaForSequenceClassification_gcls_FFN
 
 from torch.distributions.bernoulli import Bernoulli
 
 from torch.optim.lr_scheduler import LambdaLR
+
+import torch.nn.functional as F
 
 # tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
@@ -108,7 +110,8 @@ class Instructor:
             self.validation_tran_indices = self.dataset.validation_tran_indices
             self.validation_span_indices = self.dataset.validation_span_indices
         
-        if args.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
+        if args.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 'roberta_gcls_vdc_auto',
+                               'roberta_gcls_m1']:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
             self.train_VDC_info = self.dataset.train_VDC_info.to(args.device)
@@ -141,6 +144,23 @@ class Instructor:
             self.model = RobertaForSequenceClassification_TD_t_star.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_gcls:
             self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base', g_pooler = args.g_pooler)
+        elif args.model_class == RobertaForSequenceClassification_gcls_FFN:
+            self.model = RobertaForSequenceClassification_gcls_FFN.from_pretrained('roberta-base', g_pooler = args.g_pooler,
+                                                                                   forward_type = args.forward_type)
+        elif args.model_class == RobertaForSequenceClassification_gcls_VDC_auto:
+            print('args.automation_type: ', args.automation_type)
+            self.model = RobertaForSequenceClassification_gcls_VDC_auto.from_pretrained('roberta-base',g_pooler = args.g_pooler,
+                                                                                        automation_type = args.automation_type,
+                                                                                        auto_k = args.auto_k)
+            
+        elif args.model_class == RobertaForSequenceClassification_gcls_m1:
+            print('args.automation_type: ', args.automation_type)
+            self.model = RobertaForSequenceClassification_gcls_m1.from_pretrained('roberta-base',g_pooler = args.g_pooler,
+                                                                                        automation_type = args.automation_type,
+                                                                                        auto_k = args.auto_k, 
+                                                                                        embed_dense = args.embed_dense,
+                                                                                        step_threshold = args.step_threshold)
+            
         elif args.model_class == RobertaForSequenceClassification_gcls_auto:
             self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base', VDC_auto = args.VDC_auto, VIC_auto = args.VIC_auto, num_auto_layers = args.num_auto_layers, head_wise = args.head_wise, auto_VDC_k = args.auto_VDC_k, 
                                                                                     a_pooler = args.a_pooler, 
@@ -161,7 +181,7 @@ class Instructor:
             
 #         #### save & load model checkpoint if necessary.
 
-        self.model = load_model_roberta_t(self.model)
+#         self.model = load_model_roberta_VDC_auto(self.model)
         
 #         if args.save_init_model == True:
 #             torch.save(self.model.state_dict(), self.opt.model_save_path+f'/init_seed_{args.seed}.pkl')
@@ -244,108 +264,19 @@ class Instructor:
                                       warmup=args.warmup_proportion,
                                       t_total=self.num_train_steps)
             
-            self.optimizer_gcn = None
-        
-        elif args.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
-            VIC_params = None
-            VDC_params = None
+        elif args.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
+                                 'roberta_gcls_vdc_auto', 'roberta_gcls_m1']:
             
-            if args.VIC_auto == True:
-                VIC_params = []
-                for n, p in self.param_optimizer:
-                    if 'VIC_gate' in n:
-                        VIC_params.append(n)
-                    if 'query_vic' in n:
-                        VIC_params.append(n)
-                        
-                if args.VDC_auto == True:
-                    VDC_params = []
-                    for n, p in self.param_optimizer:
-                        if 'VDC_gate' in n:
-                            VDC_params.append(n)
-                            
-                    non_gate_params = []
-                    for n, p in self.param_optimizer:
-                        if n not in VIC_params and n not in VDC_params:
-                            non_gate_params.append(p)
-                            
-                    optimizer_grouped_parameters = [
-                        {'params': [p for p in non_gate_params],
-                         'weight_decay_rate': 0.01},
-                        {'params': [p for n, p in self.param_optimizer if n in VIC_params],
-                         'weight_decay_rate': 0.01, 'lr': args.VIC_gate_lr},
-                        {'params': [p for n, p in self.param_optimizer if n in VDC_params],
-                         'weight_decay_rate': 0.01, 'lr': args.VDC_gate_lr}
-                    ]
-                        
-                else:
-                    optimizer_grouped_parameters = [
-                        {'params': [p for n, p in self.param_optimizer if n not in VIC_params],
-                         'weight_decay_rate': 0.01},
-                        {'params': [p for n, p in self.param_optimizer if n in VIC_params],
-                         'weight_decay_rate': 0.01, 'lr': args.VIC_gate_lr}
-                    ]
-            elif args.VDC_auto == True:
-                VDC_params = []
-                for n, p in self.param_optimizer:
-                    if 'VDC_gate' in n:
-                        VDC_params.append(n)
-                
-                optimizer_grouped_parameters = [
-                        {'params': [p for n, p in self.param_optimizer if n not in VDC_params],
-                         'weight_decay_rate': 0.01},
-                        {'params': [p for n, p in self.param_optimizer if n in VDC_params],
-                         'weight_decay_rate': 0.01, 'lr': args.VDC_gate_lr}
-                    ]
-                
-            else:
-                optimizer_grouped_parameters = [
-                    {'params': [p for n, p in self.param_optimizer if n not in no_decay],
-                     'weight_decay_rate': 0.01},
-                    {'params': [p for n, p in self.param_optimizer if n in no_decay],
-                     'weight_decay_rate': 0.0}
-                ]
+            optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.param_optimizer if n not in no_decay],
+                 'weight_decay_rate': 0.01},
+                {'params': [p for n, p in self.param_optimizer if n in no_decay],
+                 'weight_decay_rate': 0.0}
+            ]
             
             self.optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8)
             self.scheduler = LambdaLR(self.optimizer, lr_lambda = lambda epoch: 0.95 ** epoch)
-            
-            print('='*77)
-            print('VDC_params: ', VDC_params)
-            print('VIC_params: ', VIC_params)
-            
-            self.optimizer_gcn = None
-        elif args.model_name in ['td_bert_with_gcn', 'bert_fc_gcn']:
-            optimizer_grouped_parameters = [
-                {'params': [p for n, p in self.param_optimizer if n not in no_decay and n.startswith('bert')],
-                 'weight_decay_rate': 0.01},
-                {'params': [p for n, p in self.param_optimizer if n in no_decay and n.startswith('bert')],
-                 'weight_decay_rate': 0.0}
-            ]
-            
-            optimizer_grouped_parameters_names_bert = [
-                {'params': [n for n, p in self.param_optimizer if n not in no_decay and n.startswith('bert')],
-                 'weight_decay_rate': 0.01},
-                {'params': [n for n, p in self.param_optimizer if n in no_decay and n.startswith('bert')],
-                 'weight_decay_rate': 0.0}
-            ]
-            
-            print('-'*77)
-            print('names of parameters in the BERTAdam optimizer: ')
-            print(optimizer_grouped_parameters_names_bert)
-            
-            self.optimizer = BERTAdam(optimizer_grouped_parameters,
-                                      lr=args.learning_rate,
-                                      warmup=args.warmup_proportion,
-                                      t_total=self.num_train_steps)
-            
-            print('names of parameters in the Adam optimizer: ')
-            optimizer_grouped_parameters_names_gcn= {'params': [pname for pname, p in self.param_optimizer if not pname.startswith('bert')]}
-            print(optimizer_grouped_parameters_names_gcn)
-            print('-'*77)
-            
-            self.optimizer_gcn = torch.optim.Adam(
-                [{'params': [p for pname, p in self.param_optimizer if not pname.startswith('bert')]}], lr=0.001,
-                weight_decay=0.00001)    
+          
             
         self.global_step = 0
         self.max_test_acc_INC = 0
@@ -373,47 +304,10 @@ class Instructor:
         self.test_f1_each_epoch = []
         
         
-        
-    ###############################################################################################
-    ###############################################################################################
-    
-    def get_random_L_config(self):
-        x = random.sample([2,3,4,5,6,7,8,9,10], 2)
-        x.sort()
-        return [0 for item in range(x[0])]+[1 for item in range(x[0], x[1])]+[2 for item in range(x[1], 12)] 
-        
     ###############################################################################################
     ###############################################################################################
     
     def do_train(self):
-        
-        self.train_g_config = []
-        self.eval_sg_loss = torch.zeros(12)
-        if len(self.opt.g_config) == 4:
-            for i in range(12):
-                self.train_g_config.append(torch.tensor([[self.opt.g_config[0], self.opt.g_config[1]],
-                                                         [self.opt.g_config[2], self.opt.g_config[3]]], dtype = torch.float))
-        
-        elif len(self.opt.g_config) == 9:
-            for i in range(12):
-                if i < self.opt.g_config[8]:
-                    self.train_g_config.append(torch.tensor([[self.opt.g_config[0], self.opt.g_config[1]],
-                                                         [self.opt.g_config[2], self.opt.g_config[3]]], dtype = torch.float))
-                else:
-                    self.train_g_config.append(torch.tensor([[self.opt.g_config[4], self.opt.g_config[5]],
-                                                         [self.opt.g_config[6], self.opt.g_config[7]]], dtype = torch.float))
-                    
-        elif len(self.opt.g_config) == 12:
-            for i in range(12):
-                if i < 4:
-                    self.train_g_config.append(torch.tensor([[self.opt.g_config[0], self.opt.g_config[1]],
-                                                         [self.opt.g_config[2], self.opt.g_config[3]]], dtype = torch.float))
-                elif i < 8:
-                    self.train_g_config.append(torch.tensor([[self.opt.g_config[4], self.opt.g_config[5]],
-                                                         [self.opt.g_config[6], self.opt.g_config[7]]], dtype = torch.float)) 
-                elif i < 12:
-                    self.train_g_config.append(torch.tensor([[self.opt.g_config[8], self.opt.g_config[9]],
-                                                         [self.opt.g_config[10], self.opt.g_config[11]]], dtype = torch.float))
                 
         print('# of train_examples: ', len(self.dataset.train_examples))
         print('# of eval_examples: ', len(self.dataset.eval_examples))
@@ -421,7 +315,7 @@ class Instructor:
             print('# of validation_examples: ', len(self.dataset.validation_examples))
         
         for i_epoch in range(int(args.num_train_epochs)):
-            if i_epoch == 5:
+            if i_epoch == 8:
                 if task_name == 'tweet' and self.max_test_acc_INC < 0.70:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
@@ -430,11 +324,11 @@ class Instructor:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
-                elif task_name == 'restaurant' and self.max_test_acc_INC < 0.8:
+                elif task_name == 'restaurant' and self.max_test_acc_INC < 0.82:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
-                elif task_name == 'mams' and self.max_test_acc_INC < 0.55:
+                elif task_name == 'mams' and self.max_validation_acc_INC < 0.80:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
@@ -464,8 +358,6 @@ class Instructor:
                     print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[50250]))
                 self.model.train()
                 self.optimizer.zero_grad()
-                if self.optimizer_gcn != None:
-                    self.optimizer_gcn.zero_grad()
                 
                 input_ids, label_ids, all_input_guids = batch
                 if self.opt.model_name in ['roberta_lcf', 'roberta_lcf_td']:
@@ -474,10 +366,16 @@ class Instructor:
                 elif self.opt.model_name in ['roberta_gcls_td', 'roberta_asc_td']:
                     input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
                     input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
-                elif self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
+                elif self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
+                                             'roberta_gcls_vdc_auto']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                     train_VDC_info = self.train_VDC_info[all_input_guids]
+                elif self.opt.model_name in ['roberta_gcls_m1']:
+                    input_ids = input_ids.to(self.opt.device)
+                    train_extended_attention_mask = self.train_extended_attention_mask[all_input_guids].transpose(0,1)
+                    train_VDC_info = self.train_VDC_info[all_input_guids]
+                
                 elif self.opt.model_name in ['roberta']:
                     input_ids = input_ids.to(self.opt.device)
                 else:
@@ -493,7 +391,8 @@ class Instructor:
                     train_lcf_matrix = train_lcf_matrix.to(self.opt.device)
                 
                 if self.global_step % 100 == 0:
-                    if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
+                    if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
+                                               'roberta_gcls_vdc_auto', 'roberta_gcls_m1']:
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
                         print('guid: ', all_input_guids[0])
@@ -531,19 +430,45 @@ class Instructor:
                     sg_loss, output_ = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = train_extended_attention_mask, 
                                               VDC_info = train_VDC_info)[:2]
+                    loss, logits = output_[:2]
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_FFN]:
+                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = train_extended_attention_mask, 
+                                              VDC_info = train_VDC_info, forward_type = args.forward_type)[:2]
+                    loss, logits = output_[:2]
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_VDC_auto]:
+                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = train_extended_attention_mask, 
+                                              VDC_info = train_VDC_info)[:2]
                     
                     loss, logits = output_[:2]
 #                     loss = loss + max(0, 0.2 - sum(sg_loss)/len(sg_loss))
-                   
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
-                    _, sg_loss, output_ = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask, 
-                                              VDC_info = train_VDC_info, automation_visualization = False, 
-                                              )
-                    loss, logits = output_[:2]
+
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_m1]:
+                    if args.automation_type in ['g_centroid_v0_kd']: 
+                        sg_loss, output_, affinity_kd, h_affinity_kd = self.model(input_ids, labels = label_ids,
+                                                  extended_attention_mask = train_extended_attention_mask, 
+                                                  VDC_info = train_VDC_info)[:4]
+
+                        loss, logits = output_[:2]
+                        kd_loss = F.mse_loss(affinity_kd, h_affinity_kd)
+                        loss += kd_loss
+                        if self.global_step % 50 == 0:
+                            print()
+                            print('kd_loss: ', kd_loss)
+                            print('affinity_kd[0][0][:50]: ', affinity_kd[0][0][:50])
+                            print('h_affinity_kd[0][0][:50]: ', h_affinity_kd[0][0][:50])
+                        
+                    else:
+                        sg_loss, output_, auto_att_scores = self.model(input_ids, labels = label_ids,
+                                                  extended_attention_mask = train_extended_attention_mask, 
+                                                  VDC_info = train_VDC_info)[:3]
+
+                        loss, logits = output_[:2]
                     
-#                     loss = loss + max(0, 0.5 - sg_loss[11])
-                
+                        
+                   
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask)
                     
@@ -626,13 +551,11 @@ class Instructor:
                         copy_optimizer_params_to_model(self.model.named_parameters(), self.param_optimizer)
                     else:
                         self.optimizer.step()
-                        if self.optimizer_gcn != None:
-                            self.optimizer_gcn.step()
                         # self.optimizer_me.step()
                     self.model.zero_grad()
                     self.global_step += 1
                     
-                if self.global_step % self.opt.log_step == 0 and i_epoch > -1:
+                if self.global_step % self.opt.log_step == 0 and i_epoch > 4:
                     print('lr: ', self.optimizer.param_groups[0]['lr'])
                     print('lr2: ', self.optimizer.param_groups[1]['lr'])
                     
@@ -642,18 +565,20 @@ class Instructor:
                         result, validation_increased = self.do_eval('validation')
                         if validation_increased:
                             self.latest_increase_epoch = i_epoch
-                            print('='*77)
-                            print('Validation increased... testing on the test set')
-                            print('='*77)
-                            test_result, _ = self.do_eval()
-                            print('-'*77)
-                            print(f"Test results => Acc: {test_result['eval_accuracy']}, f1: {test_result['eval_f1']}")
-                            print('-'*77)
-                            self.last_test_acc = test_result['eval_accuracy']
-                            self.last_test_f1 = test_result['eval_f1']
-                            self.last_test_epoch = i_epoch
+#                         if validation_increased:
+#                             self.latest_increase_epoch = i_epoch
+#                             print('='*77)
+#                             print('Validation increased... testing on the test set')
+#                             print('='*77)
+#                             test_result, _ = self.do_eval()
+#                             print('-'*77)
+#                             print(f"Test results => Acc: {test_result['eval_accuracy']}, f1: {test_result['eval_f1']}")
+#                             print('-'*77)
+#                             self.last_test_acc = test_result['eval_accuracy']
+#                             self.last_test_f1 = test_result['eval_f1']
+#                             self.last_test_epoch = i_epoch
                     else:
-                        result, validation_increased = self.do_eval(eval_sg_output = False)
+                        result, validation_increased = self.do_eval()
                         if validation_increased:
                             self.latest_increase_epoch = i_epoch
                                 
@@ -672,8 +597,12 @@ class Instructor:
                         print('terminating training due to nan')
                         sys.exit()
                     if task_name == 'mams':
+#                         print(
+#                         "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f} | last_test_acc: {10:.6f} | last_test_f1: {11:.6f} | last_test_epoch: {12:.6f} | latest_increase_epoch: {13:.1f}".format(
+#                             train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC, self.last_test_acc, self.last_test_f1, self.last_test_epoch, self.latest_increase_epoch))
+                        
                         print(
-                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f} | last_test_acc: {10:.6f} | last_test_f1: {11:.6f} | last_test_epoch: {12:.6f} | latest_increase_epoch: {13:.1f}".format(
+                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | latest_increase_epoch: {13:.1f}".format(
                             train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC, self.last_test_acc, self.last_test_f1, self.last_test_epoch, self.latest_increase_epoch))
                     else:
                         print(
@@ -682,7 +611,7 @@ class Instructor:
                     
                         
                         
-    def do_eval(self, data_type = None, automation_visualization = False, eval_sg_output = False):  
+    def do_eval(self, data_type = None):  
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
@@ -694,25 +623,29 @@ class Instructor:
             d_loader = self.dataset.validation_dataloader
         else:
             d_loader = self.dataset.eval_dataloader
-           
-        if automation_visualization == True:
-            vis_vdc = None
-            vis_vic = None
             
-        if eval_sg_output == True:
-            self.eval_sg_loss = torch.zeros(12)
-            
+        eval_vdc = None
         for batch in tqdm(d_loader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
             input_ids, label_ids, all_input_guids = batch
                 
-            if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_auto']:
+            if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
+                                       'roberta_gcls_vdc_auto']:
                 input_ids = input_ids.to(self.opt.device)
                 if data_type == 'validation':
                     extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
                     eval_VDC_info = self.validation_VDC_info[all_input_guids]
                 else:
                     extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
+                    eval_VDC_info = self.eval_VDC_info[all_input_guids]
+                    
+            elif self.opt.model_name in ['roberta_gcls_m1']:
+                input_ids = input_ids.to(self.opt.device)
+                if data_type == 'validation':
+                    extended_att_mask = self.validation_extended_attention_mask[all_input_guids].transpose(0,1)
+                    eval_VDC_info = self.validation_VDC_info[all_input_guids]
+                else:
+                    extended_att_mask = self.eval_extended_attention_mask[all_input_guids].transpose(0,1)
                     eval_VDC_info = self.eval_VDC_info[all_input_guids]
                     
             elif self.opt.model_name in ['roberta']:
@@ -745,37 +678,31 @@ class Instructor:
                     sg_loss, output_ = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = extended_att_mask,
                                               VDC_info = eval_VDC_info)[:2]
+                    loss, logits = output_[:2]
+                
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_FFN]:
+                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = extended_att_mask,
+                                              VDC_info = eval_VDC_info, forward_type = args.forward_type)[:2]
+                    loss, logits = output_[:2]
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_VDC_auto]:
+                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = extended_att_mask,
+                                              VDC_info = eval_VDC_info)[:2]
                     
                     loss, logits = output_[:2]
                     
-                    if eval_sg_output:
-                        for jj in range(12):
-                            self.eval_sg_loss[jj] += sg_loss[jj].item()
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_m1]:
+                    sg_loss, output_, eval_auto_att_scores = self.model(input_ids, labels = label_ids,
+                                              extended_attention_mask = extended_att_mask,
+                                              VDC_info = eval_VDC_info)[:3]
                     
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
-                    vis, sg_loss, output_ = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask, 
-                                              VDC_info = eval_VDC_info, automation_visualization = automation_visualization,
-                                              sg_output = eval_sg_output,
-                                              )
                     loss, logits = output_[:2]
-                    
-                    if automation_visualization == True:
-                        if args.VDC_auto:
-                            if vis_vdc == None:
-                                vis_vdc = vis[0].transpose(0,1)
-                            else:
-                                vis_vdc = torch.cat((vis_vdc, vis[0].transpose(0,1)), dim= 0)
-                        
-                        if args.VIC_auto:
-                            if vis_vic == None:
-                                vis_vic = vis[1].transpose(0,1)
-                            else:
-                                vis_vic = torch.cat((vis_vic, vis[1].transpose(0,1)), dim= 0)
-                                
-                    if eval_sg_output:
-                        for jj in range(12):
-                            self.eval_sg_loss[jj] += sg_loss[jj].item()
+                    if eval_vdc == None:
+                        eval_vdc = eval_auto_att_scores
+                    else:
+                        eval_vdc = torch.cat((eval_vdc, eval_auto_att_scores), dim =0)
                                 
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
@@ -860,8 +787,6 @@ class Instructor:
         
         eval_loss = eval_loss / nb_eval_steps
         
-        if eval_sg_output:
-            self.eval_sg_loss = self.eval_sg_loss / nb_eval_steps
         
         eval_accuracy = eval_accuracy / nb_eval_examples
         
@@ -915,51 +840,13 @@ class Instructor:
                 result['eval_accuracy_'+str(i+1)] = eval_accuracy_rand[i]
                 result['eval_f1_'+str(i+1)] = eval_accuracy_rand[i]
             
-        
-        if automation_visualization == True:
-            if args.VDC_auto:
-                assert vis_vdc.size(0) == len(self.dataset.eval_examples) # vis_vdc.size():  torch.Size([1120, 12, 12, 7])
-                if args.head_wise == True:
-                    print('='*77)
-                    print('1. Layer-wise results')
-                    print('1.1 VDC_results: ')
-                    for jj in range(12):
-                        result = torch.mean(torch.mean(vis_vdc[:, jj, :, :], dim= 0), dim = 0).tolist()
-                        result_ = [round(n,2) for n in result]
-                        print(f'layer {jj}: ', result_)
-
-                else:
-                    print('='*77)
-                    print('1. Layer-wise results')
-                    print('1.1 VDC_results: ')
-                    for jj in range(12):
-                        result = torch.mean(vis_vdc[:, jj, :], dim= 0).tolist()
-                        result_ = [round(n,2) for n in result]
-                        print(f'layer {jj}: ', result_)
-                
-            if args.VIC_auto:
-                assert vis_vic.size(0) == len(self.dataset.eval_examples) # vis_vic.size():  torch.Size([1120, 12, 12, 4])
-                if args.head_wise == True:
-                    print('='*77)
-                    print('1. Layer-wise results')
-                    print('1.1 VIC_results: ')
-                    for jj in range(12):
-                        result = torch.mean(torch.mean(vis_vic[:, jj, :, :], dim= 0), dim = 0).tolist()
-                        result_ = [round(n, 2) for n in result]
-                        print(f'layer {jj}: ', result_ )
-                else:
-                    print('='*77)
-                    print('1. Layer-wise results')
-                    print('1.1 VIC_results: ')
-                    for jj in range(12):
-                        result = torch.mean(vis_vic[:, jj, :], dim= 0).tolist()
-                        result_ = [round(n, 2) for n in result]
-                        print(f'layer {jj}: ', result_ )
-                        
-        if eval_sg_output:
-            print('=========== sg loss ===========')
-            for jj in range(12):
-                print(f'Layer {jj}: {self.eval_sg_loss[jj]}')
+            
+#         if validation_increased == True:
+#             assert eval_vdc.size(0) == len(self.dataset.eval_examples)
+            
+#             torch.save(eval_vdc, f'./vis/{args.automation_type}_{args.model_init_seed}_eval_vdc.pt')
+#             torch.save(torch.FloatTensor(y_pred), f'./vis/{args.automation_type}_{args.model_init_seed}_y_pred.pt')
+#             torch.save(torch.FloatTensor(y_true), f'./vis/{args.automation_type}_{args.model_init_seed}_y_true.pt')
             
         return result, validation_increased
         
@@ -1006,18 +893,16 @@ class Instructor:
             print("Test Set Accuracy: {:.4f}".format(test_accuracy))
         if task_name == 'mams':
             print("Max validation set acc: {:.4f}, F1: {:.4f}".format(self.max_validation_acc_INC, self.max_validation_f1_INC))
-            print("Max test set acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc_INC, self.max_test_f1_INC))
-            print("Last test set acc: {:.4f}, F1: {:.4f}, epoch: {:.4f}".format(self.last_test_acc, self.last_test_f1, 
-                                                                                self.last_test_epoch))
-            print('In detail -----------------------------------------------')
-            for i in range(len(self.test_acc_each_epoch)):
-                print(f"Early stop after {i+1} epoch : [Acc: {self.test_acc_each_epoch[i]} / F1: {self.test_f1_each_epoch[i]}")
+#             print("Max test set acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc_INC, self.max_test_f1_INC))
+#             print("Last test set acc: {:.4f}, F1: {:.4f}, epoch: {:.4f}".format(self.last_test_acc, self.last_test_f1, 
+#                                                                                 self.last_test_epoch))
+#             print('In detail -----------------------------------------------')
+#             for i in range(len(self.test_acc_each_epoch)):
+#                 print(f"Early stop after {i+1} epoch : [Acc: {self.test_acc_each_epoch[i]} / F1: {self.test_f1_each_epoch[i]}")
                 
         else:
             print("Max validate set acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc_INC, self.max_test_f1_INC))
-            print('=========== best-case sg loss ===========')
-            for jj in range(12):
-                print(f'Layer {jj}: {self.eval_sg_loss[jj]}')
+#             print('=========== best-case sg loss ===========')
 #             print("Max validate set acc: {:.4f}, F1: {:.4f}".format(self.max_test_acc_rand, self.max_test_f1_rand))
             
 #         self.writer.close()
@@ -1046,6 +931,9 @@ if __name__ == "__main__":
         'roberta_td': RobertaForSequenceClassification_TD,
         'roberta_td_t_star': RobertaForSequenceClassification_TD_t_star,
         'roberta_gcls': RobertaForSequenceClassification_gcls,
+        'roberta_gcls_vdc_auto': RobertaForSequenceClassification_gcls_VDC_auto,
+        'roberta_gcls_m1': RobertaForSequenceClassification_gcls_m1,
+        'roberta_gcls_ffn': RobertaForSequenceClassification_gcls_FFN,
         'roberta_gcls_auto': RobertaForSequenceClassification_gcls_auto,
         'clstm': CLSTM,
         'pf_cnn': PF_CNN,
