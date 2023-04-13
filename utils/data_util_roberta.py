@@ -88,8 +88,8 @@ class ReadData:
             self.DGEDT_validation_data = self.eval_data_loader.data
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
-        if opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_vdc_auto',
-                              'roberta_gcls_star', 'roberta_gcls_step']:
+        if opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
+                              'roberta_gcls_vdc_auto', 'roberta_gcls_star', 'roberta_gcls_m1']:
             
             if opt.graph_type == 'dg':
                 self.train_gcls_attention_mask, train_cumul_DG_words, train_total_tokens = self.process_DG(self.DGEDT_train_data,
@@ -233,7 +233,7 @@ class ReadData:
             
             # Converting to gcls_att_mask. 
             aspect_length = len(DGEDT_train_data[i]['aspect_indices']) - 2
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_step', 'roberta_gcls_vdc_auto']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_ffn', 'roberta_gcls_m1', 'roberta_gcls_vdc_auto']:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
@@ -316,7 +316,7 @@ class ReadData:
             final_all_paths.append(all_paths)
             
             # Now let's make the gcls_att_mask.
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_vdc_auto', 'roberta_gcls_step']:
+            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_ffn', 'roberta_gcls_vdc_auto', 'roberta_gcls_m1']:
                 A = 2
             elif self.opt.model_name in ['roberta_gcls_2']:
                 A = 3
@@ -549,7 +549,8 @@ class ReadData:
             
 
         # VDC_info: for VDC-automation
-        VDC_info = torch.full([all_input_ids.size(0), 128], 0) 
+        VDC_info = torch.full([all_input_ids.size(0), 128], 99) 
+        VDC_info[:,:2] = 0
         sgg_info = torch.full([all_input_ids.size(0)], 0)
         
         g_config = []
@@ -633,7 +634,7 @@ class ReadData:
             elif new_VDC_K[i] == 3:
                 new_VDC_k = [0,0,0,1,1,1,2,2,2,3,3,3]
             elif new_VDC_K[i] == 4:
-                new_VDC_k = [0,0,0,0,2,2,2,2,4,4,4,4]
+                new_VDC_k = [0,0,0,1,1,1,2,2,3,3,4,4]
             elif new_VDC_K[i] == 5:
                 new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,5]
             elif new_VDC_K[i] == 6:
@@ -652,7 +653,7 @@ class ReadData:
             if self.opt.constant_vdc != None:
                 new_VDC_k = self.opt.constant_vdc # ssss
                 
-            if 'query_step' in self.opt.automation_type:
+            if 'g_centroid' in self.opt.automation_type:
                 assert new_VDC_k == [0,1,2,3,4,5,6,7,8,9,10,11]
                 
             # decreasing VDC
@@ -661,15 +662,18 @@ class ReadData:
     
             for j, item in enumerate(new_VDC_k):
                 if self.opt.graph_type == 'dg':
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
+                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
                     
                 elif self.opt.graph_type == 'sd':
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-
-                extended_attention_mask[i, j, :, 0, 0] = (1-g_config[0]) * -10000.0
-                extended_attention_mask[i, j, :, 0, 1] = (1-g_config[1]) * -10000.0
-                extended_attention_mask[i, j, :, 1, 0] = (1-g_config[2]) * -10000.0
-                extended_attention_mask[i, j, :, 1, 1] = (1-g_config[3]) * -10000.0
+                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
+                
+                if self.opt.automation_type in ['s_only_att', 's_only_ec']:
+                    extended_attention_mask[i, j, :, 1, 0] = (1-g_config[0]) * -10000.0
+                else:
+                    extended_attention_mask[i, j, :, 0, 0] = (1-g_config[0]) * -10000.0
+                    extended_attention_mask[i, j, :, 0, 1] = (1-g_config[1]) * -10000.0
+                    extended_attention_mask[i, j, :, 1, 0] = (1-g_config[2]) * -10000.0
+                    extended_attention_mask[i, j, :, 1, 1] = (1-g_config[3]) * -10000.0
                 
                 if self.opt.automation_type in ['no_params', 'query', 'SA']:
                     for k in range(self.opt.auto_k + 1):
