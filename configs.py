@@ -139,7 +139,7 @@ def get_config():
                         help="number of layers for GoBERTa-automation")
     parser.add_argument('--auto_VDC_k',
                         type=int,
-                        default=1,
+                        default=11,
                         help="how many numbers to learn for VDC automation")
     parser.add_argument("--K",
                         default=10,
@@ -169,6 +169,11 @@ def get_config():
                         type=str,
                         required=True,
                         help="The VDC-automation type.")
+    parser.add_argument("--forward_type",
+                        default=None,
+                        type=str,
+                        required=False,
+                        help="The forward type of gcls_ffn.")
     parser.add_argument("--auto_k",
                         default=2,
                         type=int,
