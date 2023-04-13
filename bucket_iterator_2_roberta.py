@@ -132,6 +132,15 @@ class BucketIterator_2(object):
 
                 text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
                 
+            elif self.input_format == 's_only_X':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [0] + text_indices_copy[1:] + [2] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+                
             elif self.input_format == 'a1':
                 text_indices_copy = text_indices.copy()
                 # for roberta_td
