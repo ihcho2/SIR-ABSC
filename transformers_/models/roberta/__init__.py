@@ -68,8 +68,12 @@ else:
         "RobertaForSequenceClassification_gcls_VDC_auto",
     ]
     
-    _import_structure["modeling_roberta_step"] = [
-        "RobertaForSequenceClassification_gcls_step",
+    _import_structure["modeling_roberta_m1"] = [
+        "RobertaForSequenceClassification_gcls_m1"
+    ]
+    
+    _import_structure["modeling_roberta_FFN"] = [
+        "RobertaForSequenceClassification_gcls_FFN",
     ]
 
 try:
@@ -148,8 +152,12 @@ if TYPE_CHECKING:
             RobertaForSequenceClassification_gcls_VDC_auto,
         )
         
-        from .modeling_roberta_step import (
-            RobertaForSequenceClassification_gcls_step,
+        from .modeling_roberta_m1 import (
+            RobertaForSequenceClassification_gcls_m1,
+        )
+        
+        from .modeling_roberta_FFN import (
+            RobertaForSequenceClassification_gcls_FFN,
         )
         
     try:
