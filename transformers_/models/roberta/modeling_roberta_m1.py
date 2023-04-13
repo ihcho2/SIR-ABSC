@@ -345,7 +345,7 @@ class RobertaSelfAttention(nn.Module):
 
 
 # Copied from transformers.models.bert.modeling_bert.BertSelfAttention with Bert->Roberta
-class RobertaSelfAttention_step(nn.Module):
+class RobertaSelfAttention_m1(nn.Module):
     def __init__(self, config, position_embedding_type=None, automation_type = None, auto_k = None, step_threshold = None):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
@@ -376,26 +376,28 @@ class RobertaSelfAttention_step(nn.Module):
         ####### ======= VDC_automation related parameters
         self.automation_type = automation_type
         self.auto_k = auto_k
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size) # For the attention_pooling
-        self.step_threshold = step_threshold
-        if self.automation_type in ['query', 'query_step_guide']:
+        
+        if self.automation_type in ['m1_query_att']:
             self.replicate_query = nn.ModuleList([nn.Linear(config.hidden_size, config.hidden_size) for _ in 
                                                   range(self.auto_k+1)])
-        elif self.automation_type in ['query_step_discont_v0', 'query_step_cont_v0']: # uses 0, +1
+            self.dense = nn.Linear(config.hidden_size, config.hidden_size) # For the attention_pooling
+            
+        elif self.automation_type in ['m1_query_att_headwise']:
             self.replicate_query = nn.ModuleList([nn.Linear(config.hidden_size, config.hidden_size) for _ in 
-                                                  range(2)])
-        elif self.automation_type in ['query_step_discont_v1', 'query_step_cont_v1']: # uses 0, +1, +2
+                                                  range(self.auto_k+1)])
+            self.dense_headwise = nn.Linear(64, 64)
+            
+        elif self.automation_type in ['m1_query_ec']:
             self.replicate_query = nn.ModuleList([nn.Linear(config.hidden_size, config.hidden_size) for _ in 
-                                                  range(3)])
-        elif self.automation_type in ['query_step_discont_v0123']: # uses 0, +1, +2, +3
-            self.replicate_query = nn.ModuleList([nn.Linear(config.hidden_size, config.hidden_size) for _ in 
-                                                  range(4)])
-        elif self.automation_type in ['query_step_discont_v2', 'query_step_cont_v2']: # uses 0, +1, -1
-            self.replicate_query = nn.ModuleList([nn.Linear(config.hidden_size, config.hidden_size) for _ in 
-                                                  range(3)])
-        elif self.automation_type in ['query_step_discont_v3', 'query_step_cont_v3']: # uses 0, +1, +2, -1, -2
-            self.replicate_query = nn.ModuleList([nn.Linear(config.hidden_size, config.hidden_size) for _ in 
-                                                  range(5)])
+                                                  range(self.auto_k+1)])
+            self.centroid = nn.Linear(config.hidden_size, 1)
+            
+        elif self.automation_type in ['m1_no_param_att']:
+            self.dense = nn.Linear(config.hidden_size, config.hidden_size) # For the attention_pooling
+            
+        elif self.automation_type in ['m1_no_param_ec']:
+            self.centroid = nn.Linear(config.hidden_size, 1)
+            
         ####### ======= VDC_automation related parameters
         
 #         if self.dense != None:
@@ -403,213 +405,54 @@ class RobertaSelfAttention_step(nn.Module):
 #         if self.dense.bias is not None:
 #             self.dense.bias.data.zero_()
         
-        
-    def att_pool(self, tensor_list) -> torch.Tensor:
-#         x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1), z.unsqueeze(1)), dim = 1)
-        x_y = torch.cat(([x.unsqueeze(1) for x in tensor_list]), dim=1)
-        cat = torch.mean(x_y, dim=1)
-#         cat = torch.max(x_y, dim=1)[0]
-        context = self.dense(cat)
+    def att_pool(self, tensor_) -> torch.Tensor:
+        # 혹시 head-wise? 같은거 할 때 쓸 수 있을까봐 => cat = torch.sum(tensor_, dim=1)/torch.sum(vdc_info_float, dim=1).unsqueeze(1)
+        context = torch.mean(tensor_, dim = 1)
+        context = self.dense(context)
         context = self.tanh(context)
         
-        attention_scores = torch.matmul(context.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,len(tensor_list))
+        attention_scores = torch.matmul(context.unsqueeze(1), tensor_.transpose(1,2))
+        attention_scores = attention_scores.view(-1,tensor_.size(1))
         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768))
-#         final_output = torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768)
+        final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(1), tensor_).view(-1, 768))
         return final_output, attention_probs
 
-    def att_pool_replicate(self, tensor_list, layer) -> torch.Tensor:
-#         x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1), z.unsqueeze(1)), dim = 1)
-        x_y = torch.cat(([x.unsqueeze(1) for x in tensor_list]), dim=1)
-        cat = torch.mean(x_y, dim=1)
-#         cat = torch.max(x_y, dim=1)[0]
-        context = layer(cat)
-        context = self.tanh(context)
-        
-        attention_scores = torch.matmul(context.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,len(tensor_list))
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768))
-#         final_output = torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768)
-        return final_output
+    def att_pool_ec(self, tensor_) -> torch.Tensor:
+        attention_scores = self.centroid(tensor_).view(-1,tensor_.size(1))
+        attention_probs = nn.functional.softmax(attention_scores, dim=1)
+        final_output =  self.tanh(torch.matmul(attention_probs.unsqueeze(1), tensor_).view(-1, 768))
+        return final_output, attention_probs
     
-    def att_pool_step_guide(self, g_vector, tensor_list) -> torch.Tensor:
-#         x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1), z.unsqueeze(1)), dim = 1)
-        x_y = torch.cat(([x.unsqueeze(1) for x in tensor_list]), dim=1)
-        x_y = torch.cat((g_vector.unsqueeze(1), x_y), dim=1)
+#     def att_pool_headwise(self, tensor_, layer) -> torch.Tensor:
+#         # 혹시 head-wise? 같은거 할 때 쓸 수 있을까봐 => cat = torch.sum(tensor_, dim=1)/torch.sum(vdc_info_float, dim=1).unsqueeze(1)
+#         context = torch.mean(tensor_, dim = 1)
+#         context = layer(context)
+#         context = self.tanh(context)
         
-        cat = torch.mean(x_y, dim=1)
-#         cat = torch.max(x_y, dim=1)[0]
-        context = self.dense(cat)
-        context = self.tanh(context)
-        
-        attention_scores = torch.matmul(context.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,len(tensor_list)+1)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-#         final_output = torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768)
-#         final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768))
-        
-        # Discrete MoE
-        arg_max = torch.max(attention_probs, dim=1)[1]
-        max_ = torch.max(attention_probs, dim=1)[0]
-        
-#         # Update curr_vdc
-#         vdc_update_1 = (torch.max(attention_probs, dim=1)[0] > 0.8).long()
-#         vdc_update_2 = (torch.max(attention_probs, dim=1)[1] == 1).long()
-#         vdc_update = (vdc_update_1 + vdc_update_2 == 2.0).long()
-        
-#         if layer_num < 11:
-# #             curr_vdc = curr_vdc + arg_max # 이거 assert로 검사는 해보자.
-#             curr_vdc = curr_vdc + vdc_update
-        
-        final_output = max_.unsqueeze(1) * x_y[range(arg_max.size(0)), arg_max] + (1-max_.unsqueeze(1)) * g_vector
-#         final_output = self.tanh(final_output)
-#         assert ((1-max_)>= 0.0).all()
-#         for i in range(arg_max.size(0)):
-#             assert (final_output[i] == max_[i] * x_y[i, arg_max[i]] + (1-max_[i])*g_vector[i]).all()
-            
-        
-        return final_output, None
+#         attention_scores = torch.matmul(context.unsqueeze(1), tensor_.transpose(1,2))
+#         attention_scores = attention_scores.view(-1,tensor_.size(1))
+#         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+#         final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(1), tensor_).view(-1, 64))
+#         return final_output, attention_probs
     
-    def att_pool_step_discont(self, tensor_list, curr_vdc, layer_num) -> torch.Tensor:
-        x_y = torch.cat(([x.unsqueeze(1) for x in tensor_list]), dim=1)
+    def att_pool_headwise(self, tensor_) -> torch.Tensor:
+        # tensor_ size => [32, K, 12, 64]
+        t = tensor_.transpose(1,2) # [32, 12, K, 64]
+        mean_tensor = torch.mean(tensor_, dim=2) # [32, 12, 64]
+        context = self.tanh(self.dense_headwise(mean_tensor)) # [32, 12, 64]
         
-        cat = torch.mean(x_y, dim=1)
-#         cat = torch.max(x_y, dim=1)[0]
-        context = self.dense(cat)
-        context = self.tanh(context)
-        
-        attention_scores = torch.matmul(context.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,len(tensor_list))
+        attention_scores = torch.matmul(context.unsqueeze(2), tensor_.transpose(2,3)) # [32, 12, 1, K]?
+        attention_scores = attention_scores.view(-1,12, t.size(-2)) # [32, 12, K]
         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768))
-        
+        final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(2), t).view(-1,12,64))
+        return final_output, attention_probs
     
-        arg_max = torch.max(attention_probs, dim=1)[1] # gives the indices
-        value_max = torch.max(attention_probs, dim=1)[0] # gives the values
-        
-        # Variant 
-#         final_output = self.tanh(value_max.unsqueeze(1) * x_y[range(arg_max.size(0)), arg_max])
-        
-        # Update curr_vdc
-        if self.automation_type == 'query_step_discont_v0': # uses 0, +1
-            vdc_update_1 = (value_max > self.step_threshold).long()
-            # No threshold
-#             vdc_update_1 = (value_max > 0).long()
-            
-            vdc_update_2 = (arg_max == 1).long()
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-        elif self.automation_type == 'query_step_discont_v1': # uses 0, +1, +2
-            vdc_update_1 = (value_max > self.step_threshold).long()
-            
-            # No threshold
-#             vdc_update_1 = (value_max > 0).long()
-            
-            vdc_update_2 = (arg_max == 1).long() + \
-                           2*(arg_max == 2).long() 
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-        elif self.automation_type == 'query_step_discont_v0123': # uses 0, +1, +2, +3
-            vdc_update_1 = (value_max > self.step_threshold).long()
-            vdc_update_2 = (arg_max == 1).long() + \
-                           2*(arg_max == 2).long() + \
-                           3*(arg_max == 3).long()
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-            
-        elif self.automation_type == 'query_step_discont_v2': # uses 0, +1, -1
-            vdc_update_1 = (value_max > self.step_threshold).long()
-            vdc_update_2 = (arg_max == 1).long() + \
-                           (-1)*(arg_max == 2).long() 
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-        elif self.automation_type == 'query_step_discont_v3': # uses 0, +1, +2, -1, -2
-            vdc_update_1 = (value_max > self.step_threshold).long()
-            vdc_update_2 = (arg_max == 1).long() + \
-                           2*(arg_max== 2).long() + \
-                           (-1)*(arg_max == 3).long() + \
-                           (-2)*(arg_max == 4).long()
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-        
-        
-        if layer_num < 11:
-            curr_vdc = torch.clamp((curr_vdc + vdc_update), min=0, max=11)
-        
-#         final_output = max_.unsqueeze(1) * x_y[range(arg_max.size(0)), arg_max] + (1-max_.unsqueeze(1)) * g_vector
-#         final_output = self.tanh(final_output)
-#         assert ((1-max_)>= 0.0).all()
-#         for i in range(arg_max.size(0)):
-#             assert (final_output[i] == max_[i] * x_y[i, arg_max[i]] + (1-max_[i])*g_vector[i]).all()
-            
-        
-        return final_output, curr_vdc
+    def att_pool_ec_headwise(self, tensor_, layer) -> torch.Tensor:
+        attention_scores = layer(tensor_).view(-1,tensor_.size(1))
+        attention_probs = nn.functional.softmax(attention_scores, dim=1)
+        final_output =  self.tanh(torch.matmul(attention_probs.unsqueeze(1), tensor_).view(-1, 768))
+        return final_output, attention_probs
     
-    def att_pool_step_cont(self, tensor_list, curr_vdc, layer_num, alpha) -> torch.Tensor:
-        x_y = torch.cat(([x.unsqueeze(1) for x in tensor_list]), dim=1)
-        
-        cat = torch.mean(x_y, dim=1)
-#         cat = torch.max(x_y, dim=1)[0]
-        context = self.dense(cat)
-        context = self.tanh(context)
-        
-        attention_scores = torch.matmul(context.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,len(tensor_list))
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = alpha.unsqueeze(1) * self.tanh(torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768))
-        
-        # Discrete MoE
-        arg_max = torch.max(attention_probs, dim=1)[1] # gives the indices
-        value_max = torch.max(attention_probs, dim=1)[0] # gives the values
-        
-        # Update curr_vdc
-        if self.automation_type == 'query_step_cont_v0': # uses 0, +1
-            vdc_update_1 = (value_max > self.step_threshold).float()
-            vdc_update_2 = (arg_max == 1).float()
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-            
-            alpha_ = (vdc_update_1 * vdc_update_2) * value_max + (1 - vdc_update_1 * vdc_update_2) * 1
-            
-        elif self.automation_type == 'query_step_cont_v1': # uses 0, +1, +2
-#             vdc_update_1 = (value_max > self.step_threshold).float()
-            
-            # Without thresholds
-            vdc_update_1 = value_max
-            
-            
-            vdc_update_2 = (arg_max == 1).float() + \
-                           2*(arg_max == 2).float() 
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-            
-            # Default:
-            alpha_ = value_max
-            # 0 => 그냥 1을 줌.
-#             for_alpha = (arg_max == 1).float() + (arg_max == 2).float()
-#             alpha_ = (vdc_update_1 * for_alpha) * value_max + (1 - vdc_update_1 * for_alpha) * 1
-            
-            
-        elif self.automation_type == 'query_step_cont_v2': # uses 0, +1, -1
-            vdc_update_1 = (value_max > self.step_threshold).long()
-            vdc_update_2 = (arg_max == 1).long() + \
-                           (-1)*(arg_max == 2).long() 
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-        elif self.automation_type == 'query_step_cont_v3': # uses 0, +1, +2, -1, -2
-            vdc_update_1 = (value_max > self.step_threshold).long()
-            vdc_update_2 = (arg_max == 1).long() + \
-                           2*(arg_max== 2).long() + \
-                           (-1)*(arg_max == 3).long() + \
-                           (-2)*(arg_max == 4).long()
-            vdc_update = (vdc_update_1 * vdc_update_2).long()
-        
-        
-        if layer_num < 11:
-            curr_vdc = torch.clamp((curr_vdc + vdc_update), min=0, max=11)
-        
-#         final_output = max_.unsqueeze(1) * x_y[range(arg_max.size(0)), arg_max] + (1-max_.unsqueeze(1)) * g_vector
-#         final_output = self.tanh(final_output)
-#         assert ((1-max_)>= 0.0).all()
-#         for i in range(arg_max.size(0)):
-#             assert (final_output[i] == max_[i] * x_y[i, arg_max[i]] + (1-max_[i])*g_vector[i]).all()
-            
-        
-        return final_output, curr_vdc, alpha_
     
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -628,51 +471,30 @@ class RobertaSelfAttention_step(nn.Module):
         VDC_info = None,
         forward_type = None,
         layer_i = None,
-        current_vdc = None,
-        alpha = None,
     ) -> Tuple[torch.Tensor]:
         
-#         print('-'*77)
-#         print(f'layer {layer_i}, current_vdc: ')
-#         print(current_vdc[0])
         mixed_query_layer = self.query(hidden_states)
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
         
         # Add new queries to do VDC-automation.
         # (1) Without any parameters: just replicate g vector.
-        if self.automation_type == 'no_params':
+        if self.automation_type in ['m1_no_param_att', 'm1_no_param_ec']:
             mixed_query_layer = torch.cat((mixed_query_layer, 
                                            mixed_query_layer[:,1,:].unsqueeze(1),
                                            mixed_query_layer[:,1,:].unsqueeze(1)), dim=1)
             
         
         ####### ======= Att_pool method
-        elif self.automation_type in ['att_pool_query']:
+        elif self.automation_type in ['m1_query_att', 'm1_query_ec', 'm1_query_att_headwise']:
             g_replicate = self.replicate_query[0](hidden_states[:,1,:]).unsqueeze(1)
-            for i in range(1, self.auto_k+1):
+            for i in range(1, attention_mask.size(-2)-128):
                 g_replicate = torch.cat((g_replicate, 
                                          self.replicate_query[i](hidden_states[:,1,:]).unsqueeze(1)), dim=1)
                                                   
             mixed_query_layer = torch.cat((mixed_query_layer, g_replicate), dim = 1)
         ####### ======= Att_pool method
-            
-        ####### ======= Step methods
-        elif 'query_step_discont_v' in self.automation_type:
-            g_replicate = self.replicate_query[0](hidden_states[:,1,:]).unsqueeze(1)
-            for i in range(1, len(self.replicate_query)):
-                g_replicate = torch.cat((g_replicate, 
-                                             self.replicate_query[i](hidden_states[:,1,:]).unsqueeze(1)), dim=1)
-            mixed_query_layer = torch.cat((mixed_query_layer, g_replicate), dim = 1)
-            
-        elif 'query_step_cont_v' in self.automation_type:
-            g_replicate = self.replicate_query[0](hidden_states[:,1,:]).unsqueeze(1)
-            for i in range(1, len(self.replicate_query)):
-                g_replicate = torch.cat((g_replicate, 
-                                             self.replicate_query[i](hidden_states[:,1,:]).unsqueeze(1)), dim=1)
-            mixed_query_layer = torch.cat((mixed_query_layer, g_replicate), dim = 1)
-        ####### ======= Step methods
-            
+        
         query_layer = self.transpose_for_scores(mixed_query_layer)
         
         # Take the dot product between "query" and "key" to get the raw attention scores.
@@ -691,21 +513,25 @@ class RobertaSelfAttention_step(nn.Module):
         context_layer = torch.matmul(attention_probs, value_layer)
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        
+#         if self.automation_type in ['m1_query_att_headwise']:
+#             for jj in range(12):
+#                 context_layer[:,1,jj,:], auto_att_scores = self.att_pool_headwise(context_layer[:,128:,jj,:].clone(), 
+#                                                                                   self.dense_headwise[jj])
+                
+        if self.automation_type in ['m1_query_att_headwise']:
+            context_layer[:,1,:12,:], auto_att_scores = self.att_pool_headwise(context_layer[:,128:,:,:].clone())
+            
+        
+        
+        
         context_layer = context_layer.view(new_context_layer_shape)
         
-        if self.automation_type in ['no_params', 'query', 'query_step_guide']:
-            context_layer[:,1,:], current_vdc_ = self.att_pool_step_guide(context_layer[:,1,:].clone(), 
-                                                                          [context_layer[:,-2,:], context_layer[:,-1,:]])
-            
-        elif 'query_step_discont_v' in self.automation_type:
-            context_layer[:,1,:], current_vdc_ = self.att_pool_step_discont([context_layer[:,-1*kk,:] for kk in 
-                                                                            reversed(range(1, len(self.replicate_query)+1))],
-                                                                           current_vdc, layer_i)
-            
-        elif 'query_step_cont_v' in self.automation_type:
-            context_layer[:,1,:], current_vdc_, alpha_ = self.att_pool_step_cont([context_layer[:,-1*kk,:] for kk in 
-                                                                            reversed(range(1, len(self.replicate_query)+1))],
-                                                                           current_vdc, layer_i, alpha)
+        if self.automation_type in ['m1_query_att', 'm1_no_param_att']:
+            context_layer[:,1,:], auto_att_scores = self.att_pool(context_layer[:,128:,:].clone())
+          
+        elif self.automation_type in ['m1_query_ec', 'm1_no_param_ec']:
+            context_layer[:,1,:], auto_att_scores = self.att_pool_ec(context_layer[:,128:,:].clone())
         
         context_layer = context_layer[:,:128,:]
 
@@ -716,9 +542,8 @@ class RobertaSelfAttention_step(nn.Module):
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
         
 #         return outputs, current_vdc_, alpha_
-        return outputs, current_vdc_, None
+        return outputs, auto_att_scores
         
-
 
 # Copied from transformers.models.bert.modeling_bert.BertSelfOutput
 class RobertaSelfOutput(nn.Module):
@@ -786,24 +611,13 @@ class RobertaAttention(nn.Module):
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
-class RobertaAttention_step(nn.Module):
+class RobertaAttention_m1(nn.Module):
     def __init__(self, config, position_embedding_type=None, automation_type = None, auto_k = None, step_threshold = None):
         super().__init__()
-        self.self = RobertaSelfAttention_step(config, position_embedding_type=position_embedding_type, 
-                                              automation_type = automation_type, auto_k = auto_k, step_threshold = step_threshold
-                                              )
-#         elif automation_type in ['SA']:
-#             self.self = RobertaSelfAttention(config, position_embedding_type=position_embedding_type)
-
-#         self.automation_type = automation_type
-#         self.auto_k = auto_k
-
-#         if automation_type == 'SA':
-#             self.self_replicate = nn.ModuleList([RobertaSelfAttention(config, position_embedding_type=position_embedding_type)
-#                                                  for _ in range(self.auto_k+1)])
-#             self.dense = nn.Linear(config.hidden_size, config.hidden_size) # For the attention_pooling
-#             self.tanh = nn.Tanh()
-
+        
+        self.self = RobertaSelfAttention_m1(config, position_embedding_type=position_embedding_type, 
+                                            automation_type = automation_type, auto_k = auto_k, step_threshold = step_threshold
+                                            )
 
         self.output = RobertaSelfOutput(config)
         self.pruned_heads = set()
@@ -826,21 +640,6 @@ class RobertaAttention_step(nn.Module):
         self.self.all_head_size = self.self.attention_head_size * self.self.num_attention_heads
         self.pruned_heads = self.pruned_heads.union(heads)
 
-#     def att_pool(self, tensor_list) -> torch.Tensor:
-# #         x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1), z.unsqueeze(1)), dim = 1)
-#         x_y = torch.cat(([x.unsqueeze(1) for x in tensor_list]), dim=1)
-#         cat = torch.mean(x_y, dim=1)
-# #         cat = torch.max(x_y, dim=1)[0] 
-#         context = self.dense(cat)
-# #         context = self.tanh(context)
-
-#         attention_scores = torch.matmul(context.unsqueeze(1), x_y.transpose(1,2))
-#         attention_scores = attention_scores.view(-1,len(tensor_list))
-#         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-#         final_output = self.tanh(torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768))
-
-#         return final_output, attention_probs
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -852,19 +651,9 @@ class RobertaAttention_step(nn.Module):
         output_attentions: Optional[bool] = False,
         VDC_info = None,
         layer_i = None,
-        current_vdc = None,
-        alpha = None,
     ) -> Tuple[torch.Tensor]:
-#         attention_mask_0 = attention_mask[:,:,:128,:].clone()
-#         attention_mask_1 = attention_mask[:,:,:128,:].clone()
-#         attention_mask_2 = attention_mask[:,:,:128,:].clone()
 
-
-#         attention_mask_0[:,:,1,:] = attention_mask[:,:,-3,:]
-#         attention_mask_1[:,:,1,:] = attention_mask[:,:,-2,:]
-#         attention_mask_2[:,:,1,:] = attention_mask[:,:,-1,:]
-
-        self_outputs, current_vdc_, alpha_ = self.self(
+        self_outputs, auto_att_scores = self.self(
             hidden_states,
             attention_mask,
             head_mask,
@@ -874,13 +663,11 @@ class RobertaAttention_step(nn.Module):
             output_attentions,
             VDC_info = VDC_info,
             layer_i = layer_i,
-            current_vdc = current_vdc,
-            alpha = alpha,
         )
                                                 
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
-        return outputs, current_vdc_, alpha_
+        return outputs, auto_att_scores
 
 
 # Copied from transformers.models.bert.modeling_bert.BertIntermediate
@@ -915,12 +702,12 @@ class RobertaOutput(nn.Module):
 
 
 # Copied from transformers.models.bert.modeling_bert.BertLayer with Bert->Roberta
-class RobertaLayer_step(nn.Module):
+class RobertaLayer_m1(nn.Module):
     def __init__(self, config, automation_type = None, auto_k = None, step_threshold = None):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = RobertaAttention_step(config, automation_type = automation_type, auto_k = auto_k, step_threshold =
+        self.attention = RobertaAttention_m1(config, automation_type = automation_type, auto_k = auto_k, step_threshold =
                                                step_threshold)
         self.is_decoder = config.is_decoder
         self.add_cross_attention = config.add_cross_attention
@@ -939,13 +726,11 @@ class RobertaLayer_step(nn.Module):
         VDC_info = None,
         forward_type = None,
         layer_i = None,
-        current_vdc = None,
-        alpha = None,
     ) -> Tuple[torch.Tensor]:
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
         
-        self_attention_outputs, current_vdc_, alpha_ = self.attention(
+        self_attention_outputs, auto_att_scores = self.attention(
             hidden_states,
             attention_mask,
             head_mask,
@@ -953,8 +738,6 @@ class RobertaLayer_step(nn.Module):
             past_key_value=self_attn_past_key_value,
             VDC_info = VDC_info,
             layer_i = layer_i,
-            current_vdc = current_vdc,
-            alpha = alpha,
         )
         attention_output = self_attention_outputs[0]
 
@@ -976,18 +759,18 @@ class RobertaLayer_step(nn.Module):
         if self.is_decoder:
             outputs = outputs + (present_key_value,)
 
-        return outputs, current_vdc_, alpha_
+        return outputs, auto_att_scores
 
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
-class RobertaEncoder_gcls_step(nn.Module):
+class RobertaEncoder_gcls_m1(nn.Module):
     def __init__(self, config, automation_type = None, auto_k = None, step_threshold = None):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([RobertaLayer_step(config, automation_type=automation_type, auto_k = auto_k, 
+        self.layer = nn.ModuleList([RobertaLayer_m1(config, automation_type=automation_type, auto_k = auto_k, 
                                                       step_threshold = step_threshold) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
         self.automation_type = automation_type
@@ -1005,7 +788,6 @@ class RobertaEncoder_gcls_step(nn.Module):
         output_hidden_states: Optional[bool] = False,
         return_dict: Optional[bool] = True,
         VDC_info = None,
-        current_vdc = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -1015,10 +797,8 @@ class RobertaEncoder_gcls_step(nn.Module):
         next_decoder_cache = () if use_cache else None
         
 #         current_vdc_list = torch.zeros([hidden_states.size(0), 12], dtype = torch.long).to(hidden_states.device)
-        
-        #For the guided case: We don't need anything to be done unless you want visualization. Just create below for consistency.
-        current_vdc_list = torch.zeros([hidden_states.size(0), 12], dtype = torch.long).to(hidden_states.device)
-        alpha_ = torch.ones([hidden_states.size(0)], dtype = torch.float).to(hidden_states.device)
+#         auto_att_scores_ = torch.zeros([hidden_states.size(0), 12, 12], dtype = torch.float).to(hidden_states.device)
+        auto_att_scores_ = torch.zeros([hidden_states.size(0), 12, 12, 12], dtype = torch.float).to(hidden_states.device)
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -1027,46 +807,23 @@ class RobertaEncoder_gcls_step(nn.Module):
             layer_head_mask = head_mask[i] if head_mask is not None else None
             past_key_value = past_key_values[i] if past_key_values is not None else None
 
-            # For gcls models
+            # For gcls models.
 #             att_mask = attention_mask[i].clone()
             
-            # For step models => att_mask를 current_vdc_list[-1]을 가지고 수정을 해야함. 그리고 128+1 번째는 다음걸로 수정!
-            if self.automation_type in ['query_step_discont_v0', 'query_step_cont_v0']: # uses 0, +1 
-                att_mask = attention_mask[current_vdc_list[:,i], range(hidden_states.size(0)), :, :, :]
-                att_mask_0 = attention_mask[current_vdc_list[:,i],range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q = attention_mask[torch.clamp(current_vdc_list[:,i]+1, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask = torch.cat((att_mask, att_mask_0, att_mask_q), dim = -2)
-            elif self.automation_type in ['query_step_discont_v1', 'query_step_cont_v1']: # uses 0, +1, +2 
-                att_mask = attention_mask[current_vdc_list[:,i], range(hidden_states.size(0)), :, :, :] 
-                att_mask_0 = attention_mask[current_vdc_list[:,i],range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q = attention_mask[torch.clamp(current_vdc_list[:,i]+1, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q_2 = attention_mask[torch.clamp(current_vdc_list[:,i]+2, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask = torch.cat((att_mask, att_mask_0, att_mask_q, att_mask_q_2), dim = -2)
-            elif self.automation_type in ['query_step_discont_v0123']: # uses 0, +1, +2, +3
-                att_mask = attention_mask[current_vdc_list[:,i], range(hidden_states.size(0)), :, :, :] 
-                att_mask_0 = attention_mask[current_vdc_list[:,i],range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q = attention_mask[torch.clamp(current_vdc_list[:,i]+1, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q_2 = attention_mask[torch.clamp(current_vdc_list[:,i]+2, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q_3 = attention_mask[torch.clamp(current_vdc_list[:,i]+3, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask = torch.cat((att_mask, att_mask_0, att_mask_q, att_mask_q_2, att_mask_q_3), dim = -2)
-            elif self.automation_type == 'query_step_discont_v2': # uses 0, +1, -1 
-                att_mask = attention_mask[current_vdc_list[:,i], range(hidden_states.size(0)), :, :, :] 
-                att_mask_0 = attention_mask[current_vdc_list[:,i],range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q = attention_mask[torch.clamp(current_vdc_list[:,i]+1, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q_2 = attention_mask[torch.clamp(current_vdc_list[:,i]-1, min=0),range(hidden_states.size(0)),:,1:2,:]
-                att_mask = torch.cat((att_mask, att_mask_0, att_mask_q, att_mask_q_2), dim = -2)
-            elif self.automation_type == 'query_step_discont_v3': # uses only 0, +1, +2, -1, -2 
-                att_mask = attention_mask[current_vdc_list[:,i], range(hidden_states.size(0)), :, :, :] 
-                att_mask_0 = attention_mask[current_vdc_list[:,i],range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q = attention_mask[torch.clamp(current_vdc_list[:,i]+1, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q_2 = attention_mask[torch.clamp(current_vdc_list[:,i]+2, max=11),range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q_3 = attention_mask[torch.clamp(current_vdc_list[:,i]-1, min=0),range(hidden_states.size(0)),:,1:2,:]
-                att_mask_q_4 = attention_mask[torch.clamp(current_vdc_list[:,i]-2, min=0),range(hidden_states.size(0)),:,1:2,:]
-                att_mask = torch.cat((att_mask, att_mask_0, att_mask_q, att_mask_q_2, att_mask_q_3, att_mask_q_4), dim = -2)
+            # For m1 models.
+            if self.automation_type in ['m1_query_att', 'm1_query_ec', 'm1_query_att_headwise']:
+                
+                # Define heuristic VDC here.
+                heuristic_VDC = [3,3,3,3,3,3,3,3,3,3,3,3]
+                # attention_mask 자체는 data_util에서 [0,1,2,3,4,5,6,7,8,9,10,11]로 준비를 해두고.
+                
+                att_mask = attention_mask[heuristic_VDC[i]]
+                for ii in range(heuristic_VDC[i]+1):
+                    att_mask = torch.cat((att_mask, attention_mask[ii, :, :, 1:2, :]), dim = -2)
             
             gcls_update = False
 
-            layer_outputs, current_vdc_, alpha__ = layer_module(
+            layer_outputs, auto_att_scores = layer_module(
                 hidden_states,
                 att_mask,
                 layer_head_mask,
@@ -1076,14 +833,12 @@ class RobertaEncoder_gcls_step(nn.Module):
                 output_attentions,
                 VDC_info = VDC_info,
                 layer_i = i,
-                current_vdc = current_vdc_list[:,i],
-                alpha = alpha_
             )
             
-            if i < 11:
-                current_vdc_list[:, i+1] = current_vdc_
-                alpha_ = alpha__
-
+            
+            auto_att_scores_[:,i,:,:auto_att_scores.size(-1)] = auto_att_scores.clone()
+            
+            
             hidden_states = layer_outputs[0]
             if output_attentions:
                 all_self_attentions = all_self_attentions + (layer_outputs[1],)
@@ -1111,7 +866,7 @@ class RobertaEncoder_gcls_step(nn.Module):
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
             cross_attentions=all_cross_attentions,
-        ), current_vdc_list
+        ), auto_att_scores_
 
 class RobertaPooler_TD(nn.Module):
     def __init__(self, config):
@@ -1672,7 +1427,7 @@ ROBERTA_INPUTS_DOCSTRING = r"""
 )
 
 
-class RobertaModel_gcls_step(RobertaPreTrainedModel):
+class RobertaModel_gcls_m1(RobertaPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -1697,7 +1452,7 @@ class RobertaModel_gcls_step(RobertaPreTrainedModel):
         self.config = config
 
         self.embeddings = RobertaEmbeddings(config, embed_dense = embed_dense)
-        self.encoder = RobertaEncoder_gcls_step(config, automation_type = automation_type, auto_k = auto_k,
+        self.encoder = RobertaEncoder_gcls_m1(config, automation_type = automation_type, auto_k = auto_k,
                                                 step_threshold = step_threshold)
         
         self.pooler = RobertaPooler_gcls(config, g_pooler) if add_pooling_layer else None
@@ -1834,7 +1589,7 @@ class RobertaModel_gcls_step(RobertaPreTrainedModel):
             past_key_values_length=past_key_values_length,
             VDC_info = VDC_info
         )
-        encoder_outputs, curr_vdc_list = self.encoder(
+        encoder_outputs, auto_att_scores = self.encoder(
             embedding_output,
             attention_mask=extended_attention_mask,
             head_mask=head_mask,
@@ -1860,7 +1615,7 @@ class RobertaModel_gcls_step(RobertaPreTrainedModel):
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
             cross_attentions=encoder_outputs.cross_attentions,
-        ), curr_vdc_list
+        ), auto_att_scores
 
 
 @add_start_docstrings(
@@ -2252,7 +2007,7 @@ class RobertaForSequenceClassification(RobertaPreTrainedModel):
     ROBERTA_START_DOCSTRING,
 )
 
-class RobertaForSequenceClassification_gcls_step(RobertaPreTrainedModel):
+class RobertaForSequenceClassification_gcls_m1(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     def __init__(self, config, g_pooler, automation_type = None, auto_k = None, embed_dense = False, step_threshold = None):
@@ -2261,7 +2016,7 @@ class RobertaForSequenceClassification_gcls_step(RobertaPreTrainedModel):
         self.num_labels = config.num_labels
         self.config = config
 
-        self.roberta = RobertaModel_gcls_step(config, add_pooling_layer=True, g_pooler = g_pooler, 
+        self.roberta = RobertaModel_gcls_m1(config, add_pooling_layer=True, g_pooler = g_pooler, 
                                               automation_type = automation_type, auto_k = auto_k, embed_dense = embed_dense,
                                               step_threshold = step_threshold)
         self.classifier = RobertaClassificationHead_gcls(config)
@@ -2303,7 +2058,7 @@ class RobertaForSequenceClassification_gcls_step(RobertaPreTrainedModel):
         
         sg_loss = None
         
-        outputs, curr_vdc_list = self.roberta(
+        outputs, auto_att_scores = self.roberta(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -2357,7 +2112,7 @@ class RobertaForSequenceClassification_gcls_step(RobertaPreTrainedModel):
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-        ), curr_vdc_list
+        ), auto_att_scores
 
 
 @add_start_docstrings(
