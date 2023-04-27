@@ -110,58 +110,19 @@ def load_model_roberta_VDC_auto(model, checkpoint = None, mode='student', verbos
 #                 final_model_state_dict[key] = model_state_dict[pooler_key]
 #                 print('-'*77)
                 
-#             if 'replicate_query.0.' in key:
-#                 print('key: ', key)
-#                 new_key = key.replace('replicate_query.0.', 'value.')
-#                 print('new_key: ', new_key)
-#                 final_model_state_dict[key] = model_state_dict[new_key]
-#                 print('-'*77)
-#             elif 'replicate_query.1.' in key:
-#                 print('key: ', key)
-#                 new_key = key.replace('replicate_query.1.', 'value.')
-#                 print('new_key: ', new_key)
-#                 final_model_state_dict[key] = model_state_dict[new_key]
-#                 print('-'*77)
-#             elif 'replicate_query.2.' in key:
-#                 print('key: ', key)
-#                 new_key = key.replace('replicate_query.2.', 'value.')
-#                 print('new_key: ', new_key)
-#                 final_model_state_dict[key] = model_state_dict[new_key]
-#                 print('-'*77)
-#             elif 'replicate_query.3.' in key:
-#                 print('key: ', key)
-#                 new_key = key.replace('replicate_query.3.', 'value.')
-#                 print('new_key: ', new_key)
-#                 final_model_state_dict[key] = model_state_dict[new_key]
-#                 print('-'*77)
-#             elif 'replicate_query.4.' in key:
-#                 print('key: ', key)
-#                 new_key = key.replace('replicate_query.4.', 'value.')
-#                 print('new_key: ', new_key)
-#                 final_model_state_dict[key] = model_state_dict[new_key]
-#                 print('-'*77)
+            if 'special' in key:
+                print('key: ', key)
+                new_key = key.replace('_special', '')
+                print('new_key: ', new_key)
+                final_model_state_dict[key] = model_state_dict[new_key]
+                print('-'*77)
+                
 #             elif 'replicate_query.5.' in key:
 #                 print('key: ', key)
 #                 new_key = key.replace('replicate_query.5.', 'value.')
 #                 print('new_key: ', new_key)
 #                 final_model_state_dict[key] = model_state_dict[new_key]
 #                 print('-'*77)
-                
-                
-                
-            if 'dense_s.' in key:
-                print('key: ', key)
-                new_key = key.replace('dense_s.', 'value.')
-                print('new_key: ', new_key)
-                final_model_state_dict[key] = model_state_dict[new_key]
-                print('-'*77)
-            elif 'dense_g.' in key:
-                print('key: ', key)
-                new_key = key.replace('dense_g.', 'value.')
-                print('new_key: ', new_key)
-                final_model_state_dict[key] = model_state_dict[new_key]
-                print('-'*77)    
-            
                 
                 
                 
@@ -261,7 +222,7 @@ def load_model_roberta_FM(model, checkpoint1=None, checkpoint2=None, checkpoint3
         
     return model
 
-def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=None, checkpoint5 =None, mode='student', verbose=True, DEBUG=False):
+def load_model_m1(model, checkpoint1, mode='student', verbose=True, DEBUG=False):
     """
 
     :param model:
@@ -283,15 +244,6 @@ def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=Non
             raise ValueError('checkpoint %s not exist' % checkpoint1)
         if verbose:
             logger.info('loading %s finetuned model from %s' % (model._get_name(), checkpoint1))
-        model_state_dict_1 = torch.load(checkpoint1)
-        model_state_dict_2 = torch.load(checkpoint2)
-        model_state_dict_3 = torch.load(checkpoint3)
-        if checkpoint4 != None:
-            model_state_dict_4 = torch.load(checkpoint4)
-        if checkpoint5 != None:
-            model_state_dict_5 = torch.load(checkpoint5)
-            
-            
         
 #         model_state_dict_1_ = {}
 #         model_state_dict_2_ = {}
@@ -309,49 +261,17 @@ def load_model_MoE(model, checkpoint1, checkpoint2, checkpoint3, checkpoint4=Non
 #             new_key = 'bert.'+key
 #             model_state_dict_3_[new_key] = model_state_dict_3[key]
 
-        model_keys = model.bert.state_dict().keys()
+        model_state_dict = model.bert.state_dict()
         
-        merged_model_state_dict = model_state_dict_1.copy()
+        checkpoint_state_dict = torch.load(checkpoint1)
         
         
-#         for key in model_keys:
-#             for i in range(12,24):
-#                 if '.'+str(i)+'.' in key:
-#                     merged_model_state_dict[key] = model_state_dict_2[key.replace(f'bert.encoder.layer.{i}.',
-#                                                                                   f'encoder.layer.{i-12}.')]
-#             for i in range(24,36):
-#                 if '.'+str(i)+'.' in key:
-#                     merged_model_state_dict[key] = model_state_dict_3[key.replace(f'bert.encoder.layer.{i}.',
-#                                                                                   f'encoder.layer.{i-24}.')]
-                    
-        for key in model_keys:
-            for i in range(12,24):
-                if '.'+str(i)+'.' in key:
-                    merged_model_state_dict[key] = model_state_dict_2[key.replace(f'.{i}.', f'.{i-12}.')]
-            for i in range(24,36):
-                if '.'+str(i)+'.' in key:
-                    merged_model_state_dict[key] = model_state_dict_3[key.replace(f'.{i}.', f'.{i-24}.')]
-            if checkpoint4 != None:
-                for i in range(36,48):
-                    if '.'+str(i)+'.' in key:
-                        merged_model_state_dict[key] = model_state_dict_4[key.replace(f'.{i}.', f'.{i-36}.')]
-                        
-        if checkpoint5 != None:
-            for key in model_keys:
-                for i in range(0,4):
-                    if '.'+str(i)+'.' in key:
-                        merged_model_state_dict[key] = model_state_dict_5['bert.'+key.replace(f'.{i}.', f'.{i}.')]
-                for i in range(16,20):
-                    if '.'+str(i)+'.' in key:
-                        merged_model_state_dict[key] = model_state_dict_5['bert.'+key.replace(f'.{i}.', f'.{i-12}.')]
-                for i in range(32,36):
-                    if '.'+str(i)+'.' in key:
-                        merged_model_state_dict[key] = model_state_dict_5['bert.'+key.replace(f'.{i}.', f'.{i-24}.')]
+        for key in model_state_dict.keys():
+            if key in checkpoint_state_dict.keys():
+                model_state_dict[key] = checkpoint_state_dict[key]
                 
-        
-        #이거 고쳐야 할 듯. model.load_state_dict 로 ㄱ ㄱ
-        model.bert.load_state_dict(merged_model_state_dict)
-#         model.load_state_dict(merged_model_state_dict)
+                
+        model.bert.load_state_dict(model_state_dict)
         
         
     return model
