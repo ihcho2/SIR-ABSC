@@ -276,6 +276,60 @@ def load_model_m1(model, checkpoint1, mode='student', verbose=True, DEBUG=False)
         
     return model
 
+def load_model_analysis(model, checkpoint1, mode='student', verbose=True, DEBUG=False):
+    """
+
+    :param model:
+    :param checkpoint:
+    :param argstrain:
+    :param mode:  this is created because for old training the encoder and classifier are mixed together
+                  also adding student mode
+    :param train_mode:
+    :param verbose:
+    :return:
+    """
+
+    local_rank = -1
+    if checkpoint1 in [None, 'None']:
+        if verbose:
+            logger.info('no checkpoint provided for %s!' % model._get_name())
+    else:
+        if not os.path.exists(checkpoint1):
+            raise ValueError('checkpoint %s not exist' % checkpoint1)
+        if verbose:
+            logger.info('loading %s finetuned model from %s' % (model._get_name(), checkpoint1))
+        
+#         model_state_dict_1_ = {}
+#         model_state_dict_2_ = {}
+#         model_state_dict_3_ = {}
+        
+#         for key in model_state_dict_1.keys():
+#             new_key = 'bert.'+key
+#             model_state_dict_1_[new_key] = model_state_dict_1[key]
+            
+#         for key in model_state_dict_2.keys():
+#             new_key = 'bert.'+key
+#             model_state_dict_2_[new_key] = model_state_dict_2[key]
+            
+#         for key in model_state_dict_3.keys():
+#             new_key = 'bert.'+key
+#             model_state_dict_3_[new_key] = model_state_dict_3[key]
+
+        model_state_dict = model.state_dict()
+        
+        checkpoint_state_dict = torch.load(checkpoint1)
+        
+        
+        for key in model_state_dict.keys():
+            if key in checkpoint_state_dict.keys():
+                model_state_dict[key] = checkpoint_state_dict[key]
+                
+                
+        model.load_state_dict(model_state_dict)
+        
+        
+    return model
+
 def load_model_init(model, checkpoint, args, mode='exact', train_mode='finetune', verbose=True, DEBUG=False):
     """
 
