@@ -17,13 +17,14 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from tensorboardX import SummaryWriter
-from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_gcls, BertForSequenceClassification_gcls_MoE
+from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_gcls, BertForSequenceClassification_TD
+from modeling_m1 import BertForSequenceClassification_gcls_m1
 from optimization import BERTAdam
 
 from configs import get_config
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
-from utils.data_util_bert import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor
-from utils.save_and_load import load_model_MoE
+from utils.data_util_bert import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor, MamsProcessor
+from utils.save_and_load import load_model_m1
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
@@ -100,12 +101,29 @@ class Instructor:
         self.eval_tran_indices = self.dataset.eval_tran_indices
         self.eval_span_indices = self.dataset.eval_span_indices
         
-        if args.model_name in ['bert_gcls', 'scls', 'gcls_er', 'gcls_moe']:
+        if args.model_name in ['bert_gcls', 'bert_gcls_m1', 'bert_td']:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
+            
+            self.train_VDC_info = self.dataset.train_VDC_info.to(args.device)
+            self.eval_VDC_info = self.dataset.eval_VDC_info.to(args.device)
+            
+            self.train_AAW_mask_token = self.dataset.train_AAW_mask_token.to(args.device)
+            self.eval_AAW_mask_token = self.dataset.eval_AAW_mask_token.to(args.device)
+            
+            self.train_current_VDC = self.dataset.train_current_VDC.to(args.device)
+            self.eval_current_VDC = self.dataset.eval_current_VDC.to(args.device)
+            
+#             self.train_VDC_weight = self.dataset.train_VDC_weight.to(args.device)
+#             self.eval_VDC_weight = self.dataset.eval_VDC_weight.to(args.device)
+            
             if task_name == 'mams':
                 self.validation_extended_attention_mask = self.dataset.validation_extended_attention_mask.to(args.device)
-            
+                self.validation_VDC_info = self.dataset.validation_VDC_info.to(args.device)
+                self.validation_AAW_mask_token = self.dataset.validation_AAW_mask_token.to(args.device)
+                self.validation_current_VDC = self.dataset.validation_current_VDC.to(args.device)
+#                 self.validation_VDC_weight = self.dataset.validation_VDC_weight.to(args.device)
+                
         print("label size: {}".format(args.output_dim))
 
         # 初始化模型
@@ -115,24 +133,36 @@ class Instructor:
         
         if args.model_class == BertForSequenceClassification:
             self.model = BertForSequenceClassification(bert_config, len(self.dataset.label_list))
+#         if args.model_class == BertForSequenceClassification_TD:
+#             self.model = BertForSequenceClassification_TD(bert_config, len(self.dataset.label_list))
         elif args.model_class == BertForSequenceClassification_gcls:
-            self.model = BertForSequenceClassification_gcls(bert_config, len(self.dataset.label_list))
-        elif args.model_class == BertForSequenceClassification_gcls_MoE:
-            self.model = BertForSequenceClassification_gcls_MoE(bert_config, len(self.dataset.label_list))
+            self.model = BertForSequenceClassification_gcls(bert_config, len(self.dataset.label_list), g_pooler=args.g_pooler,
+                                                            plus_layer = args.plus_layer, minus_layer = args.minus_layer)
+        elif args.model_class == BertForSequenceClassification_gcls_m1:
+            self.model = BertForSequenceClassification_gcls_m1(bert_config, len(self.dataset.label_list),g_pooler = args.g_pooler,
+                                                                                        automation_type = args.automation_type,
+                                                                                        auto_k = args.auto_k, 
+                                                                                        embed_dense = args.embed_dense)
         else:
             self.model = model_classes[args.model_name](bert_config, args)
         
-        if self.opt.model_name in ['gcls_moe']:
-            self.model = load_model_MoE(self.model, self.opt.init_checkpoint, self.opt.init_checkpoint_2, 
-                                        self.opt.init_checkpoint_3, self.opt.init_checkpoint_4, self.opt.init_checkpoint_5)
-            print('-'*77)
-            print('1st MoE BERT loading from ', self.opt.init_checkpoint)
-            print('2nd MoE BERT loading from ', self.opt.init_checkpoint_2)
-            print('3rd MoE BERT loading from ', self.opt.init_checkpoint_3)
-            print('4th MoE BERT loading from ', self.opt.init_checkpoint_4)
-            print('5th MoE BERT loading from ', self.opt.init_checkpoint_5)
+        if self.opt.model_name in ['bert_gcls_m1', 'bert_td'] or self.opt.g_pooler in ['s_g_concat', 's_g_att_ec', 'dgedt_1', 'dgedt_2',
+                                                                            'dgedt_3', 's_g_att_ec_2', 's_g_avg_var_1',
+                                                                            's_g_t_avg_avg_var_1', 's_g_t_max_avg_var_1',
+                                                                            's_g_t_avg_att_ec', 's_g_t_max_att_ec',
+                                                                            's_g_att', 's_g_avg', 's_g_g2_t_avg_avg_var_1',
+                                                                            's_g_g2_t_avg_t2_avg_avg_var_1', 's_g_g2',
+                                                                            's_g2_t_avg', 's_g2_t2_avg', 's_g2_avg', 'sggcn_1',
+                                                                            'sggcn_2', 's_g_inter_t_avg_avg_var1', 't_avg',
+                                                                            'g_t_avg_avg_var_1', 'g_t_avg_att', 'g_t_avg_ec',
+                                                                            's_g_t_avg_ec', 'g', 's', 's_g_t_avg_avg_var_2',
+                                                                            's_g_t_avg_concat', 's_g_sg_avg',
+                                                                            's_g_t_avg_avg_var_3', 's_g_sg_ec', 's_g_max',
+                                                                            's_g_max_avg']:
             
-            print('-'*77)
+            self.model = load_model_m1(self.model, self.opt.init_checkpoint)
+            
+            # 검토한번해보셈: self.model.bert.___.weight.data => 전부 0은 아니겟지?
         else:
             if 'pytorch_model.bin' in self.opt.init_checkpoint:
                 self.model.bert.load_state_dict(torch.load(self.opt.init_checkpoint, map_location='cpu'))
@@ -141,6 +171,7 @@ class Instructor:
                 print('-'*77)
         
         self.model.bert.embeddings.word_embeddings.weight.data[30500] = self.model.bert.embeddings.word_embeddings.weight.data[101]
+        
         if args.fp16:
             self.model.half()
             
@@ -177,7 +208,7 @@ class Instructor:
             
             
         no_decay = ['bias', 'gamma', 'beta']
-        if args.model_name in ['td_bert', 'fc', 'bert_gcls', 'scls', 'gcls_er', 'gcls_moe']:
+        if args.model_name in ['bert_td', 'fc', 'bert_gcls', 'bert_gcls_m1']:
             optimizer_grouped_parameters = [
                 {'params': [p for n, p in self.param_optimizer if n not in no_decay],
                  'weight_decay_rate': 0.01},
@@ -228,28 +259,16 @@ class Instructor:
         self.global_step = 0
         self.max_test_acc_INC = 0
         self.max_test_acc_rand = 0
+        self.max_validation_acc_INC = 0
+        self.max_validation_f1_INC = 0
         
         self.max_test_f1_INC = 0
         self.max_test_f1_rand = 0
+        self.latest_increase_epoch = 0
         
         self.best_L_config_acc = []
         
         self.best_L_config_f1 = []
-        
-        ############### Checking several assertions for each training mode.
-        
-        if self.opt.model_name in ['fc']:
-            self.opt.random_config_training = False
-            self.opt.random_eval = False
-            
-        elif self.opt.model_name in ['bert_gcls']:
-            if self.opt.random_config_training == False:
-                assert len(self.opt.L_config_base) == 12
-            
-        elif self.opt.model_name in ['gcls_moe', 'gcls_moe_default']:
-            self.opt.random_config_training = True
-        
-        ###############
         
     ###############################################################################################
     ###############################################################################################
@@ -267,6 +286,8 @@ class Instructor:
         # for _ in trange(int(args.num_train_epochs), desc="Epoch"):
         print('# of train_examples: ', len(self.dataset.train_examples))
         print('# of eval_examples: ', len(self.dataset.eval_examples))
+        if task_name == 'mams':
+            print('# of validation_examples: ', len(self.dataset.validation_examples))
         for i_epoch in range(int(args.num_train_epochs)):
             print('>' * 100)
             print('>' * 100)
@@ -292,12 +313,22 @@ class Instructor:
                 
                 input_ids, input_mask, segment_ids, label_ids, all_input_guids = batch
                                
-                input_ids = input_ids.to(self.opt.device)
+#                 input_ids = input_ids.to(self.opt.device)
                 segment_ids = segment_ids.to(self.opt.device)
                 input_mask = input_mask.to(self.opt.device)
                 label_ids = label_ids.to(self.opt.device)
+#                 train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                 
-                train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
+                if self.opt.model_name in ['bert_gcls', 'bert_gcls_m1', 'bert_td']:
+                    input_ids = input_ids.to(self.opt.device)
+                    train_extended_attention_mask = self.train_extended_attention_mask[all_input_guids].transpose(0,1)
+                    train_VDC_info = self.train_VDC_info[all_input_guids]
+                    
+                    train_AAW_mask_token = self.train_AAW_mask_token[all_input_guids]
+                    
+                    train_current_VDC = self.train_current_VDC[all_input_guids]
+                    
+#                     train_VDC_weight = self.train_VDC_weight[all_input_guids]
                 
                 tran_indices = []
                 span_indices = []
@@ -314,64 +345,44 @@ class Instructor:
                     print('-'*77)
                     print('segment_ids: ')
                     print(segment_ids[0][:100])
+                    print('input_mask: ')
+                    print(input_mask[0][:100])
                     print('guid: ', all_input_guids[0])
+                    x = (train_VDC_info[0] == 1).nonzero(as_tuple=True)[0]
+                    print('train_VDC_info[0] target: ', tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+#                     x = (train_VDC_weight[0] == 1).nonzero(as_tuple=True)[0]
+#                     print('train_VDC_weight[0] target: ', tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                    x = (train_VDC_info[0] == -1).nonzero(as_tuple=True)[0]
+                    print('train_VDC_info[0] second g: ', tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                     print('train_extended_attention_mask layer 1')
-                    x = (train_extended_attention_mask[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                    y = (train_VDC_info[0] == 1000).nonzero(as_tuple=True)[0]
+                    x = (train_extended_attention_mask[0][0][0][y[0]] == 0).nonzero(as_tuple=True)[0]
                     print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                     print('train_extended_attention_mask layer 5')
-                    x = (train_extended_attention_mask[4][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                    x = (train_extended_attention_mask[4][0][0][y[0]] == 0).nonzero(as_tuple=True)[0]
                     print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                     print('train_extended_attention_mask layer 9')
-                    x = (train_extended_attention_mask[8][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                    x = (train_extended_attention_mask[8][0][0][y[0]] == 0).nonzero(as_tuple=True)[0]
                     print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                
-                
-                ###############################################################################################
-                ###############################################################################################
-                
-                if self.opt.random_config_training == True:
-                    if i_epoch > self.opt.rct_warmup - 1:
-                        if self.global_step % 5 == 0:
-                            train_layer_L = self.get_random_L_config()
-                            print('train_layer_L changed to: ', train_layer_L)
-#                         layer_L = self.opt.L_config_base
-#                         MoE_layer = random.choices([0,1,2,3], k = 12)
-                            MoE_layer = [100]*12
-                    else:
-                        train_layer_L = self.opt.L_config_base
-                        MoE_layer = [100]*12
-#                         MoE_layer = random.choices([0,1,2,3], k = 12)
-                else:
-                    train_layer_L = self.opt.L_config_base
-                    
-#                 if self.opt.random_config_training == True:
-#                     if self.global_step %5 == 0:
-# #                         layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
-#                         layer_L = self.opt.L_config_base
-#                         MoE_layer = [100]*12
-# #                         MoE_layer = random.choices([0,1,2,3], k = 12)
-#                     else:
-#                         layer_L = self.get_random_L_config()
-# #                         layer_L = [0,0,0,0,1,1,1,1,2,2,2,2]
-# #                         MoE_layer = random.choices([0,1,2,3], k = 12)
-#                         MoE_layer = [100]*12
-#                 else:
-#                     layer_L = self.opt.L_config_base
-                    
-                ###############################################################################################
-                ###############################################################################################
+                    print('train_current_VDC[0]: ', train_current_VDC[0])
                 
                 
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
+                    
+#                 elif self.opt.model_class in [BertForSequenceClassification_TD, CNN]:
+#                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, VDC_info = train_VDC_info)
+                    
                     #####
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, train_extended_attention_mask,
-                                              pooler_type = args.g_pooler)
+                                              g_pooler = args.g_pooler, VDC_info = train_VDC_info,
+                                              AAW_mask_token = train_AAW_mask_token, current_VDC = train_current_VDC)
                     #####
-                elif self.opt.model_class in [BertForSequenceClassification_gcls_MoE]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              train_layer_L, MoE_layer)
+                elif self.opt.model_class in [BertForSequenceClassification_gcls_m1]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, 
+                                              extended_attention_mask = train_extended_attention_mask, 
+                                              VDC_info = train_VDC_info, heuristic_vdc_auto = args.heuristic_vdc_auto)
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -456,10 +467,30 @@ class Instructor:
                         # self.optimizer_me.step()
                     self.model.zero_grad()
                     self.global_step += 1
-                if self.global_step % self.opt.log_step == 0:
+                if self.global_step % self.opt.log_step == 0 and i_epoch > -1:
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
-                    result = self.do_eval()
+                    
+                    if task_name == 'mams':
+                        result, validation_increased = self.do_eval('validation')
+                        if validation_increased:
+                            self.latest_increase_epoch = i_epoch
+#                         if validation_increased:
+#                             self.latest_increase_epoch = i_epoch
+#                             print('='*77)
+#                             print('Validation increased... testing on the test set')
+#                             print('='*77)
+#                             test_result, _ = self.do_eval()
+#                             print('-'*77)
+#                             print(f"Test results => Acc: {test_result['eval_accuracy']}, f1: {test_result['eval_f1']}")
+#                             print('-'*77)
+#                             self.last_test_acc = test_result['eval_accuracy']
+#                             self.last_test_f1 = test_result['eval_f1']
+#                             self.last_test_epoch = i_epoch
+                    else:
+                        result, validation_increased = self.do_eval()
+                        if validation_increased:
+                                self.latest_increase_epoch = i_epoch
                     tr_loss = tr_loss / nb_tr_steps
                     # self.scheduler.step(result['eval_accuracy'])
 #                     self.writer.add_scalar('train_loss', tr_loss, i_epoch)
@@ -468,21 +499,18 @@ class Instructor:
 #                     self.writer.add_scalar('eval_loss', result['eval_loss'], i_epoch)
 #                     self.writer.add_scalar('lr', self.optimizer_me.param_groups[0]['lr'], i_epoch)
                     
-                    if self.opt.random_eval == False:
+                    if task_name == 'mams':
+#                         print(
+#                         "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | max_test_acc: {8:.6f} | max_test_f1: {9:.6f} | last_test_acc: {10:.6f} | last_test_f1: {11:.6f} | last_test_epoch: {12:.6f} | latest_increase_epoch: {13:.1f}".format(
+#                             train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.max_test_acc_INC, self.max_test_f1_INC, self.last_test_acc, self.last_test_f1, self.last_test_epoch, self.latest_increase_epoch))
+                        
                         print(
-                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f}".format(
-                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC))
+                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_validation_acc: {6:.6f} | max_validation_f1: {7:.6f} | latest_increase_epoch: {8:.1f}".format(
+                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_validation_acc_INC, self.max_validation_f1_INC, self.latest_increase_epoch))
                     else:
                         print(
-                            "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f}".format(
-                                train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1']))
-                        print()
-                        print(" | max_test_acc_INC: {0:.6f} | max_test_f1_INC: {1:.6f}".format(self.max_test_acc_INC,
-                                                                                               self.max_test_f1_INC))
-                        print(" | max_test_acc_rand: {0:.6f} | max_test_f1_rand: {1:.6f}".format(self.max_test_acc_rand,
-                                                                                                 self.max_test_f1_rand))
-                        print(f" | best_L_config_acc: {self.best_L_config_acc} |")
-                        print(f" | best_L_config_f1: {self.best_L_config_f1} |")
+                        "Results: train_acc: {0:.6f} | train_f1: {1:.6f} | train_loss: {2:.6f} | eval_accuracy: {3:.6f} | eval_loss: {4:.6f} | eval_f1: {5:.6f} | max_test_acc: {6:.6f} | max_test_f1: {7:.6f} | latest_increase_epoch: {8:.1f}".format(
+                            train_accuracy_, train_f1, tr_loss, result['eval_accuracy'], result['eval_loss'], result['eval_f1'], self.max_test_acc_INC, self.max_test_f1_INC, self.latest_increase_epoch))
                         
     def do_eval(self, data_type = None):  
         self.model.eval()
@@ -497,64 +525,39 @@ class Instructor:
         else:
             d_loader = self.dataset.eval_dataloader
             
-        if self.opt.random_eval == False:
-            layer_L = self.opt.L_config_base
-            MoE_layer = [0]*12
-#             layer_L = self.get_random_L_config()
-            print()
-            print('-'*77)
-            print('eval_layer_L: ', layer_L)
-        else:
             
-            ###############################################################################################
-            ############################################################################################### 
-            
-            layer_L = self.opt.L_config_base
-            MoE_layer = [0]*12
-            
-            layer_L_rand = []
-            MoE_layer_rand = []
-            
-            for i in range(self.opt.random_eval_num):
-                layer_L_rand.append(self.get_random_L_config())
-                MoE_layer_rand.append([100]*12)
-#                 MoE_layer_rand.append(random.choices([0,1,2,3], k=12))
-                
-            print('layer_L: ', layer_L)
-            print('layer_L_rand: ', layer_L_rand)
-                
-            
-            ###############################################################################################
-            ###############################################################################################
-            
-            eval_loss_rand = [0] * self.opt.random_eval_num
-            eval_accuracy_rand = [0] * self.opt.random_eval_num
-            nb_eval_steps_rand = [0] * self.opt.random_eval_num
-            nb_eval_examples_rand = [0] * self.opt.random_eval_num
-            
-            y_pred_rand = [[] for i in range(self.opt.random_eval_num)]
-        
         for batch in tqdm(d_loader, desc="Evaluating"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
             input_ids, input_mask, segment_ids, label_ids, all_input_guids = batch
             
-#             input_ids, input_mask, segment_ids, label_ids, \
-#             input_t_ids, input_t_mask, segment_t_ids, \
-#             input_without_t_ids, input_without_t_mask, segment_without_t_ids, \
-#             input_left_t_ids, input_left_t_mask, segment_left_t_ids, \
-#             input_right_t_ids, input_right_t_mask, segment_right_t_ids, \
-#             input_left_ids, input_left_mask, segment_left_ids, \
-#             all_input_dg, all_input_dg1, all_input_dg2, all_input_dg3, all_input_guids = batch
-
-            input_ids = input_ids.to(self.opt.device)
             segment_ids = segment_ids.to(self.opt.device)
             input_mask = input_mask.to(self.opt.device)
             label_ids = label_ids.to(self.opt.device)
             
-            if data_type == 'validation':
-                extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
-            else:
-                extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
+            if self.opt.model_name in ['bert_gcls', 'bert_gcls_m1', 'bert_td']:
+                input_ids = input_ids.to(self.opt.device)
+                if data_type == 'validation':
+                    extended_att_mask = self.validation_extended_attention_mask[all_input_guids].transpose(0,1)
+                    eval_VDC_info = self.validation_VDC_info[all_input_guids]
+                    
+                    eval_AAW_mask_token = self.validation_AAW_mask_token[all_input_guids]
+                    
+                    eval_current_VDC = self.validation_current_VDC[all_input_guids]
+                    
+#                     eval_VDC_weight = self.validation_VDC_weight[all_input_guids]
+                else:
+                    extended_att_mask = self.eval_extended_attention_mask[all_input_guids].transpose(0,1)
+                    eval_VDC_info = self.eval_VDC_info[all_input_guids]
+                
+                    eval_AAW_mask_token = self.eval_AAW_mask_token[all_input_guids]
+                    
+                    eval_current_VDC = self.eval_current_VDC[all_input_guids]
+#                     eval_VDC_weight = self.eval_VDC_weight[all_input_guids]
+            
+#             if data_type == 'validation':
+#                 extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
+#             else:
+#                 extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
             
             tran_indices = []
             span_indices = []
@@ -567,35 +570,17 @@ class Instructor:
             with torch.no_grad():
                 if self.opt.model_class in [BertForSequenceClassification, CNN]:
                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
+#                 elif self.opt.model_class in [BertForSequenceClassification_TD]:
+#                     loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, VDC_info = eval_VDC_info)
                 elif self.opt.model_class in [BertForSequenceClassification_gcls]:
-                    if self.opt.random_eval == False:
-                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, extended_att_mask,
-                                                  pooler_type = args.g_pooler)
-                    else:
-                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              layer_L)
-                        
-                        loss_rand = [0] * self.opt.random_eval_num
-                        logits_rand = [0] * self.opt.random_eval_num
-                        
-                        for i in range(self.opt.random_eval_num):
-                            loss_rand[i], logits_rand[i] = self.model(input_ids, segment_ids, input_mask, label_ids, 
-                                                                      gcls_attention_mask, layer_L_rand[i])
-                        
-                elif self.opt.model_class in [BertForSequenceClassification_gcls_MoE]:
-                    if self.opt.random_eval == False:
-                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              layer_L, MoE_layer)
-                    else:
-                        loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask,
-                                              layer_L, MoE_layer)
-                        
-                        loss_rand = [0] * self.opt.random_eval_num
-                        logits_rand = [0] * self.opt.random_eval_num
-                        
-                        for i in range(self.opt.random_eval_num):
-                            loss_rand[i], logits_rand[i] = self.model(input_ids, segment_ids, input_mask, label_ids, 
-                                                                      gcls_attention_mask, layer_L_rand[i], MoE_layer_rand[i])
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, extended_att_mask,
+                                              g_pooler = args.g_pooler, VDC_info = eval_VDC_info, 
+                                              AAW_mask_token = eval_AAW_mask_token, current_VDC = eval_current_VDC)
+                elif self.opt.model_class in [BertForSequenceClassification_gcls_m1]:
+                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids,
+                                              extended_attention_mask = extended_att_mask,
+                                              VDC_info = eval_VDC_info, heuristic_vdc_auto = args.heuristic_vdc_auto)
+                    
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -692,23 +677,13 @@ class Instructor:
 
         # eval_loss = eval_loss / len(self.dataset.eval_examples)
         test_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
-        if self.opt.random_eval == True:
-            test_f1_rand = [0] * self.opt.random_eval_num
-            for i in range(self.opt.random_eval_num):
-                test_f1_rand[i] = f1_score(y_true, y_pred_rand[i], average='macro', labels=np.unique(y_true))
         
         eval_loss = eval_loss / nb_eval_steps
-        if self.opt.random_eval == True:
-            for i in range(self.opt.random_eval_num):
-                eval_loss_rand[i] = eval_loss_rand[i] / nb_eval_steps
         
         eval_accuracy = eval_accuracy / nb_eval_examples
-        if self.opt.random_eval == True:
-            for i in range(self.opt.random_eval_num):
-                eval_accuracy_rand[i] = eval_accuracy_rand[i] / nb_eval_examples
-                
+               
+        validation_increased = False
         if data_type == 'validation':
-            validation_increased = False
             if eval_accuracy > self.max_validation_acc_INC:
                 validation_increased = True
                 self.max_validation_acc_INC = eval_accuracy
@@ -727,6 +702,7 @@ class Instructor:
                     print('='*77)
         else:
             if eval_accuracy > self.max_test_acc_INC:
+                validation_increased = True
                 self.max_test_acc_INC = eval_accuracy
                 if self.max_test_acc_INC > 0.797 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
@@ -734,6 +710,7 @@ class Instructor:
                     print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
                     print('='*77)
             if test_f1 > self.max_test_f1_INC:
+                validation_increased = True
                 self.max_test_f1_INC = test_f1
                 if self.max_test_f1_INC > 0.758 and self.opt.do_save == True:
                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
@@ -741,42 +718,12 @@ class Instructor:
                     print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
                     print('='*77)
                 
-        if self.opt.random_eval == True:
-            for i in range(self.opt.random_eval_num):
-                if eval_accuracy_rand[i] > self.max_test_acc_rand:
-                    self.max_test_acc_rand = eval_accuracy_rand[i]
-                    self.best_L_config_acc = layer_L_rand[i]
-                    if self.max_test_acc_rand > 0.78 and self.opt.do_save == True:
-                        torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc_rand.pkl')
-                        print('='*77)
-                        print('model saved at: ', self.opt.model_save_path + '/best_acc_rand.pkl')
-                        print('='*77)
-                if test_f1_rand[i] > self.max_test_f1_rand:
-                    self.max_test_f1_rand = test_f1_rand[i]
-                    self.best_L_config_f1 = layer_L_rand[i]
-                    if self.max_test_f1_rand > 0.75 and self.opt.do_save == True:
-                        torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1_rand.pkl')
-                        print('='*77)
-                        print('model saved at: ', self.opt.model_save_path + '/best_f1_rand.pkl')
-                        print('='*77)
         
-        if self.opt.random_eval == False:
-            result = {'eval_loss': eval_loss,
-                      'eval_accuracy': eval_accuracy,
-                      'eval_f1': test_f1, }
-        else:
-            result = {'eval_loss': eval_loss,
-                      'eval_accuracy': eval_accuracy,
-                      'eval_f1': test_f1, }
-            for i in range(self.opt.random_eval_num):
-                result['eval_loss_'+str(i+1)] = eval_loss_rand[i]
-                result['eval_accuracy_'+str(i+1)] = eval_accuracy_rand[i]
-                result['eval_f1_'+str(i+1)] = eval_accuracy_rand[i]
+        result = {'eval_loss': eval_loss,
+                  'eval_accuracy': eval_accuracy,
+                  'eval_f1': test_f1, }
          
-        if data_type == 'validation':
-            return result, validation_increased
-        else:
-            return result
+        return result, validation_increased
 
 
     def do_predict(self):
@@ -833,6 +780,7 @@ if __name__ == "__main__":
         "restaurant": RestaurantProcessor,
         "laptop": LaptopProcessor,
         "tweet": TweetProcessor,
+        "mams": MamsProcessor,
     }
     task_name = args.task_name.lower()
     if task_name not in processors:
@@ -864,7 +812,8 @@ if __name__ == "__main__":
         'td_bert': TD_BERT,
         'td_bert_with_gcn': TD_BERT_with_GCN,
         'bert_gcls': BertForSequenceClassification_gcls,
-        'bert_gcls_moe': BertForSequenceClassification_gcls_MoE,
+        'bert_td': BertForSequenceClassification_TD,
+        'bert_gcls_m1': BertForSequenceClassification_gcls_m1,
         'bert_fc_gcn': BERT_FC_GCN,
         'td_bert_qa': TD_BERT_QA,
         'dtd_bert': DTD_BERT,
