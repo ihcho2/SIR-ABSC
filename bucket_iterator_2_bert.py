@@ -8,17 +8,19 @@ from transformers import BertTokenizer
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 class BucketIterator_2(object):
-    def __init__(self, data, batch_size, max_seq_length, other=None, sort_key='text_indices', shuffle=True, sort=False):
+    def __init__(self, data, batch_size, max_seq_length, other=None, sort_key='text_indices', shuffle=True, sort=False, 
+                 input_format = None):
         self.shuffle = shuffle
         self.sort = sort
         self.sort_key = sort_key
         self.batch_size=batch_size
-        self.data=[item for item in data if len(item['text_indices'])<100 ]
+        self.data=[item for item in data if len(item['text_indices'])<110 ]
         self.max_seq_length = max_seq_length
+        self.input_format = input_format
         
         dg_max_len = max([len(t['tran_indices']) for t in self.data])
         if other is not None:
-            self.other=[item for item in other if len(item['text_indices'])<100 ]
+            self.other=[item for item in other if len(item['text_indices'])<110 ]
             random.shuffle(self.other)
             self.batches = self.sort_and_pad(data, batch_size, self.other)
         else:
@@ -81,17 +83,261 @@ class BucketIterator_2(object):
             # GCLS
 #             text_indices = [101] + text_indices
 #             text_indices = [101] + text_indices + aspect_indices[1:]
-            text_indices = [101] + [30500] + text_indices[1:] + [30500] +\
+#             text_indices = [101] + [30500] + text_indices[1:] + [30500] +\
+#             tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is'))[1:] + aspect_indices[1:]
+            
+            if self.input_format == 'target_is':
+                text_indices = [101] + [30500] + text_indices[1:] + [30500] +\
             tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is'))[1:] + aspect_indices[1:]
+                
+            elif self.input_format == 'g_target_is':
+                text_indices = [101] + [30500] + text_indices[1:] + [30500] +\
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+                
+            elif self.input_format == 'g_comma_target_is':
+                text_indices = [101] + [30500] + text_indices[1:] + [30500] +\
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize(', target is')) + aspect_indices[1:]
+                
+            elif self.input_format == 'target_is_g_comma_X':
+                text_indices = [101] + [30500] + text_indices[1:] +\
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) +[30500] +\
+            tokenizer.convert_tokens_to_ids(tokenizer.tokenize(',')) + aspect_indices[1:]
+                
+            elif self.input_format == 'TD_X':
+                text_indices_copy = text_indices.copy()
+                text_indices = [101] + text_indices_copy[1:] + aspect_indices[1:]
+                
+            elif self.input_format == 'TD_no_X':
+                text_indices_copy = text_indices.copy()
+                text_indices = [101] + text_indices_copy[1:]
             
-            # Bi-GCLS
-#             text_indices = [101] + [101] + text_indices + aspect_indices[1:]
-#             text_indices = [101] + [101] + text_indices + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:]
+            elif self.input_format == 'X':
+                text_indices_copy = text_indices.copy()
+                text_indices = [101] + [30500] + text_indices_copy[1:] + aspect_indices[1:]
             
-            # SCLS ( = 사실상 sgcls)
-#             text_indices = [101] + [101] + [101] + text_indices + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('aspect is')) + aspect_indices[1:]
-        
+            elif self.input_format == 'g':
+                text_indices_copy = text_indices.copy()
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + [102]
+                
+            elif self.input_format == 'no_add':
+                text_indices_copy = text_indices.copy()
+                text_indices = [101] + [30500] + text_indices_copy[1:]
             
+            elif self.input_format == 'gX':
+                text_indices_copy = text_indices.copy()
+                sent = ' '
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'g_and_X':
+                text_indices_copy = text_indices.copy()
+                sent = 'and'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'g_infront_X_g_and_X':
+                text_indices_copy = text_indices.copy()
+                sent = 'and'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                
+                assert len(span_indices) == 1
+                
+                x = tran_indices[span_indices[0][0]][0] + 1
+                
+                text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+[30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'g_infront_X_X':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                
+                assert len(span_indices) == 1
+                
+                x = tran_indices[span_indices[0][0]][0] + 1
+                
+                text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+ tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'g_infront_X_gX':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                
+                assert len(span_indices) == 1
+                
+                x = tran_indices[span_indices[0][0]][0] + 1
+                
+                text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+[30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'g_infront_X_g':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                
+                assert len(span_indices) == 1
+                
+                x = tran_indices[span_indices[0][0]][0] + 1
+                
+                text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+[30500] + [102]
+                
+                
+            elif self.input_format == 's_and_g_and_X':
+                text_indices_copy = text_indices.copy()
+                sent = 'and'
+                sent2 = ' and '
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent2)) + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 's2_gX':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                    
+                text_indices = [101] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+            
+            elif self.input_format == 's2_g_and_X':
+                text_indices_copy = text_indices.copy()
+                sent = 'and'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                    
+                text_indices = [101] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 's_and_g':
+                text_indices_copy = text_indices.copy()
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('and')) + [30500] + [102]
+                
+            elif self.input_format == 'based_on_s_and_g':
+                text_indices_copy = text_indices.copy()
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('based on ')) + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('and')) + [30500] + [102]
+                
+            elif self.input_format == 's_g_and_X':
+                text_indices_copy = text_indices.copy()
+                sent = ', and'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(',')) + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 's_g_X':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [101] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'what_do_you_think_1':
+                text_indices_copy = text_indices.copy()
+                sent = 'what do you think of the'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                    
+                sent += ' of it ?'
+
+                text_indices = [101] + text_indices_copy[1:] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'what_do_you_think_2':
+                text_indices_copy = text_indices.copy()
+                sent = 'what do you think of'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                    
+                sent += ' using'
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('and')) + [30500]+[102]
+                
+            elif self.input_format == 'what_do_you_think_3':
+                text_indices_copy = text_indices.copy()
+                sent = 'what do you think of'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                    
+                sent += 'of it based on'
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('and')) + [30500]+[102]
+                
+            elif self.input_format == 'what_do_you_think_4':
+                text_indices_copy = text_indices.copy()
+                sent = 'what do you think of'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                    
+                sent += ' based on'
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('and')) + [30500]+[102]
+                
+            elif self.input_format == 's_g':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [101] + [30500] + [102]
+                
+            elif self.input_format == 's_comma_g':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [101] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(',')) + [30500] + [102]
+                
+            elif self.input_format == 'g_comma_X':
+                text_indices_copy = text_indices.copy()
+                sent = ','
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'gX_2':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                
+            elif self.input_format == 'Xg':
+                text_indices_copy = text_indices.copy()
+                sent = ''
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+
+                text_indices = [101] + [30500] + text_indices_copy[1:] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [30500] + [102]
             
 #             text_indices = text_indices + aspect_indices[1:] \
 #             + tokenizer.convert_tokens_to_ids(tokenizer.tokenize('target is')) + aspect_indices[1:] \
