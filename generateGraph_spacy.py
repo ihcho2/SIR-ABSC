@@ -121,20 +121,34 @@ def process(filename, edge_vocab = None, pos_vocab = None, savevocab = True, par
         
     return edge_vocab, pos_vocab
 
+def get_config():
+    parser = argparse.ArgumentParser()
+    TIMESTAMP = "{0:%Y-%m-%d--%H-%M-%S/}".format(datetime.now())
+
+    ## Required parameters
+    parser.add_argument("--parser_info",
+                        default='spacy_sm_3.3.0',
+                        type=str,
+                        help="Parser you want to use.")
+    
+    return parser.parse_args()
 
 if __name__ == '__main__':
     
-    parser_info = 'spacy_sm_3.3.0'
+    args = get_config()
     
-#     edge_vocab, pos_vocab =process('./datasets/acl-14-short-data/train.raw', None, True, parser_info=parser_info)
-#     process('./datasets/acl-14-short-data/test.raw', edge_vocab, pos_vocab, False, parser_info=parser_info)
+#     edge_vocab, pos_vocab =process('./datasets/acl-14-short-data/train.raw', None, True, parser_info=args.parser_info)
+#     process('./datasets/acl-14-short-data/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
     
-    edge_vocab, pos_vocab =process('./datasets/semeval14/restaurants/restaurant_train.raw', None, True, parser_info=parser_info)
-    process('./datasets/semeval14/restaurants/restaurant_test.raw', edge_vocab, pos_vocab, False, parser_info=parser_info)
+    edge_vocab, pos_vocab =process('./datasets/semeval14/restaurants/restaurant_train.raw', None, True, 
+                                   parser_info = args.parser_info)
+    process('./datasets/semeval14/restaurants/restaurant_test.raw', edge_vocab, pos_vocab, False, 
+            parser_info=args.parser_info)
     
-#     edge_vocab, pos_vocab =process('./datasets/semeval14/laptops/laptop_train.raw', None, True, parser_info=parser_info)
-#     process('./datasets/semeval14/laptops/laptop_test.raw', edge_vocab, pos_vocab, False, parser_info=parser_info)
+#     edge_vocab, pos_vocab =process('./datasets/semeval14/laptops/laptop_train.raw', None, True, 
+#                                    parser_info=args.parser_info)
+#     process('./datasets/semeval14/laptops/laptop_test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
     
-#     edge_vocab, pos_vocab =process('./datasets/MAMS-ATSA/train.raw', None, True, parser_info=parser_info)
-#     process('./datasets/MAMS-ATSA/test.raw', edge_vocab, pos_vocab, False, parser_info=parser_info)
-#     process('./datasets/MAMS-ATSA/validation.raw', edge_vocab, pos_vocab, False, parser_info=parser_info)
+#     edge_vocab, pos_vocab =process('./datasets/MAMS-ATSA/train.raw', None, True, parser_info=args.parser_info)
+#     process('./datasets/MAMS-ATSA/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+#     process('./datasets/MAMS-ATSA/validation.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
