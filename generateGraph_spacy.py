@@ -27,7 +27,7 @@ def update_vocabs(text, edge_vocab, pos_vocab):
     return edge_vocab, pos_vocab
 
 
-def dependency_adj_matrix(text,edge_vocab):
+def dependency_adj_matrix(text, edge_vocab, pos_vocab):
     # https://spacy.io/docs/usage/processing-text
     document = nlp(text.strip())
     seq_len = len(tokenize(text))
@@ -54,7 +54,7 @@ def dependency_adj_matrix(text,edge_vocab):
                     matrix1[child.i][token.i] = 1
                     edge[token.i][child.i] = edge_vocab.get(child.dep_,1)
                     edge1[child.i][token.i] = edge_vocab.get(child.dep_,1)
-                    pos_tag[token.i] = token.pos_
+                    pos_tag[token.i] = pos_vocab.get(token.pos_,1)
                     
     return matrix, matrix1, edge, edge1, pos_tag
 
@@ -104,7 +104,7 @@ def process(filename, edge_vocab = None, pos_vocab = None, savevocab = True, par
     for i in tqdm.tqdm(range(0, len(lines), 3)):
         text_left = [s.lower().strip() for s in lines[i].split("$T$")]
         aspect = lines[i + 1].lower().strip()
-        adj_matrix = dependency_adj_matrix(concat(text_left,aspect),edge_vocab)
+        adj_matrix = dependency_adj_matrix(concat(text_left,aspect), edge_vocab, pos_vocab)
         idx2graph[i] = adj_matrix
         
     pickle.dump(idx2graph, fout) 
