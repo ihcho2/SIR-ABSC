@@ -77,12 +77,38 @@ def concat(texts,aspect):
     return re.sub(r' {2,}',' ',source.strip())
 
 
-def process(filename, edge_vocab = None, pos_vocab = None, savevocab = True, parser_info = None):
-    if edge_vocab is not None:
-        pass
-    else:
-        edge_vocab={'<pad>': 0, '<unk>': 1}
-        pos_vocab={'<pad>':0, '<unk>':1}
+def create_global_vocabs(all_files, parser_info=None):
+    edge_global_vocab={'<pad>': 0, '<unk>': 1}
+    pos_global_vocab={'<pad>':0, '<unk>':1}
+    
+    for filename in all_files:
+        fin = open(filename, 'r', encoding='utf-8', newline='\n', errors='ignore')
+        lines = fin.readlines()
+        fin.close()
+        
+        for i in tqdm.tqdm(range(0, len(lines), 3)):
+            text_left = [s.lower().strip() for s in lines[i].split("$T$")]
+            aspect = lines[i + 1].lower().strip()
+
+            edge_global_vocab, pos_global_vocab = update_vocabs(concat(text_left,aspect), edge_global_vocab, pos_global_vocab)
+    
+    fin_edge = open('./datasets/' + parser_info + '.global_edge_vocab', 'wb')
+    fin_pos = open('./datasets/' + parser_info + '.global_pos_vocab', 'wb')
+    
+    pickle.dump(edge_global_vocab, fin_edge)
+    pickle.dump(pos_global_vocab, fin_pos)
+    
+    fin_edge.close()
+    fin_pos.close()
+    
+    print('='*77)
+    print('edge_global_vocab: ', edge_global_vocab)
+    print('pos_global_vocab: ', pos_global_vocab)
+    
+    return edge_global_vocab, pos_global_vocab
+    
+    
+def process(filename, global_edge_vocab = None, global_pos_vocab = None, parser_info = None):
         
     fin = open(filename, 'r', encoding='utf-8', newline='\n', errors='ignore')
     lines = fin.readlines()
@@ -90,38 +116,18 @@ def process(filename, edge_vocab = None, pos_vocab = None, savevocab = True, par
     idx2graph = {}
     
     fout = open(filename+'_'+parser_info+'.graph', 'wb')
-    
-    if savevocab:
-        fout1 = open(filename+'_'+parser_info+'.edgevocab', 'wb')
-        fout2 = open(filename+'_'+parser_info+'.posvocab', 'wb')
-        
-    if savevocab:
-        for i in tqdm.tqdm(range(0, len(lines), 3)):
-            text_left = [s.lower().strip() for s in lines[i].split("$T$")]
-            aspect = lines[i + 1].lower().strip()
-            
-            edge_vocab, pos_vocab = update_vocabs(concat(text_left,aspect), edge_vocab, pos_vocab)
             
     for i in tqdm.tqdm(range(0, len(lines), 3)):
         text_left = [s.lower().strip() for s in lines[i].split("$T$")]
         aspect = lines[i + 1].lower().strip()
-        adj_matrix = dependency_adj_matrix(concat(text_left,aspect), edge_vocab, pos_vocab)
+        adj_matrix = dependency_adj_matrix(concat(text_left,aspect), global_edge_vocab, global_pos_vocab)
         idx2graph[i] = adj_matrix
         
     pickle.dump(idx2graph, fout) 
-    
-    if savevocab:
-        pickle.dump(edge_vocab, fout1)
-        pickle.dump(pos_vocab, fout2)
         
     fout.close() 
-    
-    if savevocab:
-        fout1.close() 
-        fout2.close()
-        
-    return edge_vocab, pos_vocab
 
+    
 def get_config():
     parser = argparse.ArgumentParser()
 
@@ -141,30 +147,39 @@ if __name__ == '__main__':
     print('args.parser_info: ', args.parser_info)
     print('='*77)
     
+    
     if 'spacy_sm' in args.parser_info:
         nlp = spacy.load('en_core_web_sm')
     elif 'spacy_lg' in args.parser_info:
         nlp = spacy.load('en_core_web_lg')
 
+        
+    # Creating global edge and pos vocabs.
+    global_edge_vocab, global_pos_vocab = create_global_vocabs(all_files = ['./datasets/semeval14/laptops/laptop_train.raw',
+                                                                          './datasets/semeval14/restaurants/restaurant_train.raw',
+                                                                            './datasets/acl-14-short-data/train.raw',
+                                                                            './datasets/MAMS-ATSA/train.raw'],
+                                                              parser_info = args.parser_info)
+    
     # 1. Laptop
-    edge_vocab, pos_vocab =process('./datasets/semeval14/laptops/laptop_train.raw', None, True, 
-                                   parser_info=args.parser_info)
-    process('./datasets/semeval14/laptops/laptop_test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+    process('./datasets/semeval14/laptops/laptop_train.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
+    process('./datasets/semeval14/laptops/laptop_test.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
     
     
-    # 2. Restaurant
-    edge_vocab, pos_vocab =process('./datasets/semeval14/restaurants/restaurant_train.raw', None, True, 
-                                   parser_info = args.parser_info)
-    process('./datasets/semeval14/restaurants/restaurant_test.raw', edge_vocab, pos_vocab, False, 
-            parser_info=args.parser_info)
+# #     # 2. Restaurant
+    process('./datasets/semeval14/restaurants/restaurant_train.raw', global_edge_vocab, global_pos_vocab, 
+            parser_info = args.parser_info)
+    process('./datasets/semeval14/restaurants/restaurant_test.raw', global_edge_vocab, global_pos_vocab, 
+            parser_info = args.parser_info)
     
     
-    # 3. Twitter
-    edge_vocab, pos_vocab =process('./datasets/acl-14-short-data/train.raw', None, True, parser_info=args.parser_info)
-    process('./datasets/acl-14-short-data/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
-
+# #     # 3. Twitter
+    process('./datasets/acl-14-short-data/train.raw', global_edge_vocab, global_pos_vocab, 
+            parser_info = args.parser_info)
+    process('./datasets/acl-14-short-data/test.raw', global_edge_vocab, global_pos_vocab, 
+            parser_info = args.parser_info)
     
-    # 4. MAMS
-    edge_vocab, pos_vocab =process('./datasets/MAMS-ATSA/train.raw', None, True, parser_info=args.parser_info)
-    process('./datasets/MAMS-ATSA/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
-    process('./datasets/MAMS-ATSA/validation.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+# #     # 4. MAMS
+    process('./datasets/MAMS-ATSA/train.raw', global_edge_vocab, global_pos_vocab, parser_info = args.parser_info)
+    process('./datasets/MAMS-ATSA/test.raw', global_edge_vocab, global_pos_vocab, parser_info = args.parser_info)
+    process('./datasets/MAMS-ATSA/validation.raw', global_edge_vocab, global_pos_vocab, parser_info = args.parser_info)
