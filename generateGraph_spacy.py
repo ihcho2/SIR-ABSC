@@ -4,8 +4,9 @@ import numpy as np
 import spacy
 import pickle
 import tqdm
-nlp = spacy.load('en_core_web_sm')
 import re
+import argparse
+
 
 def tokenize(text):
     text=text.strip()
@@ -123,7 +124,6 @@ def process(filename, edge_vocab = None, pos_vocab = None, savevocab = True, par
 
 def get_config():
     parser = argparse.ArgumentParser()
-    TIMESTAMP = "{0:%Y-%m-%d--%H-%M-%S/}".format(datetime.now())
 
     ## Required parameters
     parser.add_argument("--parser_info",
@@ -137,18 +137,34 @@ if __name__ == '__main__':
     
     args = get_config()
     
-#     edge_vocab, pos_vocab =process('./datasets/acl-14-short-data/train.raw', None, True, parser_info=args.parser_info)
-#     process('./datasets/acl-14-short-data/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+    print('='*77)
+    print('args.parser_info: ', args.parser_info)
+    print('='*77)
     
+    if 'spacy_sm' in args.parser_info:
+        nlp = spacy.load('en_core_web_sm')
+    elif 'spacy_lg' in args.parser_info:
+        nlp = spacy.load('en_core_web_lg')
+
+    # 1. Laptop
+    edge_vocab, pos_vocab =process('./datasets/semeval14/laptops/laptop_train.raw', None, True, 
+                                   parser_info=args.parser_info)
+    process('./datasets/semeval14/laptops/laptop_test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+    
+    
+    # 2. Restaurant
     edge_vocab, pos_vocab =process('./datasets/semeval14/restaurants/restaurant_train.raw', None, True, 
                                    parser_info = args.parser_info)
     process('./datasets/semeval14/restaurants/restaurant_test.raw', edge_vocab, pos_vocab, False, 
             parser_info=args.parser_info)
     
-#     edge_vocab, pos_vocab =process('./datasets/semeval14/laptops/laptop_train.raw', None, True, 
-#                                    parser_info=args.parser_info)
-#     process('./datasets/semeval14/laptops/laptop_test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
     
-#     edge_vocab, pos_vocab =process('./datasets/MAMS-ATSA/train.raw', None, True, parser_info=args.parser_info)
-#     process('./datasets/MAMS-ATSA/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
-#     process('./datasets/MAMS-ATSA/validation.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+    # 3. Twitter
+    edge_vocab, pos_vocab =process('./datasets/acl-14-short-data/train.raw', None, True, parser_info=args.parser_info)
+    process('./datasets/acl-14-short-data/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+
+    
+    # 4. MAMS
+    edge_vocab, pos_vocab =process('./datasets/MAMS-ATSA/train.raw', None, True, parser_info=args.parser_info)
+    process('./datasets/MAMS-ATSA/test.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
+    process('./datasets/MAMS-ATSA/validation.raw', edge_vocab, pos_vocab, False, parser_info=args.parser_info)
