@@ -92,7 +92,7 @@ def process(filename, edge_vocab = None, pos_vocab = None, savevocab = True, par
     
     if savevocab:
         fout1 = open(filename+'_'+parser_info+'.edgevocab', 'wb')
-        fout2 = open(filename+'-'+parser_info+'.posvocab', 'wb')
+        fout2 = open(filename+'_'+parser_info+'.posvocab', 'wb')
         
     if savevocab:
         for i in tqdm.tqdm(range(0, len(lines), 3)):
