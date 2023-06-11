@@ -164,13 +164,10 @@ class ABSADatesetReader:
                 'train': './datasets/semeval14/laptops/laptop_train.raw',
                 'test': './datasets/semeval14/laptops/laptop_test.raw'
             },
-            'rest15': {
-                'train': './datasets/semeval15/restaurant_train.raw',
-                'test': './datasets/semeval15/restaurant_test.raw'
-            },
-            'rest16': {
-                'train': './datasets/semeval16/restaurant_train.raw',
-                'test': './datasets/semeval16/restaurant_test.raw'
+            'mams': {
+                'train': './datasets/MAMS-ATSA/train.raw',
+                'test': './datasets/MAMS-ATSA/test.raw',
+                'validation': './datasets/MAMS-ATSA/validation.raw'
             },
             'other': {
                 'train': './datasets/datas/amazon_review.txt',
@@ -185,6 +182,10 @@ class ABSADatesetReader:
                                                                       parser_info = parser_info))
         self.test_data = ABSADataset(ABSADatesetReader.__read_data__(fname[dataset]['test'], self.tokenizer,
                                                                      parser_info = parser_info))
+        if dataset== 'mams':
+            self.validation_data = ABSADataset(ABSADatesetReader.__read_data__(fname[dataset]['validation'], self.tokenizer,
+                                                                     parser_info = parser_info))
+        
             
 
 def get_config():
@@ -236,10 +237,10 @@ if __name__ == '__main__':
         return re.sub(r' {2,}',' ',source.strip())
     
     # 1. Laptop
-#     tmp=ABSADatesetReader(dataset='lap14', parser_info = args.parser_info)
-#     dataset='lap14'
-#     with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
-#                      pickle.dump(tmp, f)
+    tmp=ABSADatesetReader(dataset='lap14', parser_info = args.parser_info)
+    dataset='lap14'
+    with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
+        pickle.dump(tmp, f)
     
     # 2. Restaurant
     tmp=ABSADatesetReader(dataset='rest14', parser_info = args.parser_info)
@@ -248,7 +249,13 @@ if __name__ == '__main__':
         pickle.dump(tmp, f)
             
     # 3. Twitter
-#     tmp=ABSADatesetReader(dataset='twitter', parser_info = args.parser_info)
-#     dataset='twitter'
-#     with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
-#                      pickle.dump(tmp, f)
+    tmp=ABSADatesetReader(dataset='twitter', parser_info = args.parser_info)
+    dataset='twitter'
+    with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
+        pickle.dump(tmp, f)
+            
+    # 4. MAMS
+    tmp=ABSADatesetReader(dataset='mams', parser_info = args.parser_info)
+    dataset='mams'
+    with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
+        pickle.dump(tmp, f)
