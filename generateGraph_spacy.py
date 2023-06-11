@@ -128,6 +128,11 @@ def process(filename, global_edge_vocab = None, global_pos_vocab = None, parser_
     fout.close() 
 
     
+def boolean_string(s):
+    if s not in {'False', 'True'}:
+        raise ValueError('Not a valid boolean string')
+    return s == 'True'
+
 def get_config():
     parser = argparse.ArgumentParser()
 
@@ -136,6 +141,10 @@ def get_config():
                         default='spacy_sm_3.3.0',
                         type=str,
                         help="Parser you want to use.")
+    parser.add_argument("--create_global_vocabs",
+                        default = True,
+                        type=boolean_string,
+                        help ="Whether to create global vocabs or not.")
     
     return parser.parse_args()
 
@@ -152,34 +161,41 @@ if __name__ == '__main__':
         nlp = spacy.load('en_core_web_sm')
     elif 'spacy_lg' in args.parser_info:
         nlp = spacy.load('en_core_web_lg')
-
         
     # Creating global edge and pos vocabs.
-    global_edge_vocab, global_pos_vocab = create_global_vocabs(all_files = ['./datasets/semeval14/laptops/laptop_train.raw',
+    if args.create_global_vocabs == True:
+        global_edge_vocab, global_pos_vocab = create_global_vocabs(all_files = ['./datasets/semeval14/laptops/laptop_train.raw',
                                                                           './datasets/semeval14/restaurants/restaurant_train.raw',
                                                                             './datasets/acl-14-short-data/train.raw',
                                                                             './datasets/MAMS-ATSA/train.raw'],
-                                                              parser_info = args.parser_info)
+                                                                              parser_info = args.parser_info)
+    else:
+        with open('./datasets/' + args.parser_info + '.global_edge_vocab', 'rb') as file:
+            global_edge_vocab = pickle.load(file)
+            print('loaded global_edge_vocab from: ', './datasets/' + args.parser_info + '.global_edge_vocab')
+        with open('./datasets/' +args.parser_info + '.global_pos_vocab', 'rb') as file:
+            global_pos_vocab = pickle.load(file)
+            print('loaded global_pos_vocab from: ', './datasets/' + args.parser_info + '.global_pos_vocab')
     
     # 1. Laptop
-    process('./datasets/semeval14/laptops/laptop_train.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
-    process('./datasets/semeval14/laptops/laptop_test.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
+#     process('./datasets/semeval14/laptops/laptop_train.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
+#     process('./datasets/semeval14/laptops/laptop_test.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
     
     
-# #     # 2. Restaurant
+    # 2. Restaurant
     process('./datasets/semeval14/restaurants/restaurant_train.raw', global_edge_vocab, global_pos_vocab, 
             parser_info = args.parser_info)
     process('./datasets/semeval14/restaurants/restaurant_test.raw', global_edge_vocab, global_pos_vocab, 
             parser_info = args.parser_info)
     
     
-# #     # 3. Twitter
+    # 3. Twitter
     process('./datasets/acl-14-short-data/train.raw', global_edge_vocab, global_pos_vocab, 
             parser_info = args.parser_info)
     process('./datasets/acl-14-short-data/test.raw', global_edge_vocab, global_pos_vocab, 
             parser_info = args.parser_info)
     
-# #     # 4. MAMS
+    # 4. MAMS
     process('./datasets/MAMS-ATSA/train.raw', global_edge_vocab, global_pos_vocab, parser_info = args.parser_info)
     process('./datasets/MAMS-ATSA/test.raw', global_edge_vocab, global_pos_vocab, parser_info = args.parser_info)
     process('./datasets/MAMS-ATSA/validation.raw', global_edge_vocab, global_pos_vocab, parser_info = args.parser_info)
