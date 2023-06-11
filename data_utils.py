@@ -56,7 +56,7 @@ class Tokenizer(object):
             realwords.extend(wordpieces)
             trans.append([tmplen,len(realwords)])
             
-            assert tmplen != realwords
+            assert tmplen != len(realwords)
             
         sequence = [self.tokenizer._convert_token_to_id('[CLS]')]+[self.tokenizer._convert_token_to_id(w) for w in realwords]+[self.tokenizer._convert_token_to_id('[SEP]')]
         if len(sequence) == 0:
