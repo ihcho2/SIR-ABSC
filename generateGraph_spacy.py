@@ -48,6 +48,7 @@ def dependency_adj_matrix(text, edge_vocab, pos_vocab):
         if token.i < seq_len:
             matrix[token.i][token.i] = 1
             matrix1[token.i][token.i] = 1
+            pos_tag[token.i] = pos_vocab.get(token.pos_,1)
             
             for child in token.children:
                 if child.i < seq_len:
@@ -55,7 +56,6 @@ def dependency_adj_matrix(text, edge_vocab, pos_vocab):
                     matrix1[child.i][token.i] = 1
                     edge[token.i][child.i] = edge_vocab.get(child.dep_,1)
                     edge1[child.i][token.i] = edge_vocab.get(child.dep_,1)
-                    pos_tag[token.i] = pos_vocab.get(token.pos_,1)
                     
     return matrix, matrix1, edge, edge1, pos_tag
 
@@ -178,8 +178,8 @@ if __name__ == '__main__':
             print('loaded global_pos_vocab from: ', './datasets/' + args.parser_info + '.global_pos_vocab')
     
     # 1. Laptop
-#     process('./datasets/semeval14/laptops/laptop_train.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
-#     process('./datasets/semeval14/laptops/laptop_test.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
+    process('./datasets/semeval14/laptops/laptop_train.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
+    process('./datasets/semeval14/laptops/laptop_test.raw', global_edge_vocab, global_pos_vocab, parser_info=args.parser_info)
     
     
     # 2. Restaurant
