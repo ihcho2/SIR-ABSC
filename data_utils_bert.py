@@ -5,8 +5,7 @@ import pickle
 import numpy as np
 from tqdm import tqdm
 import re
-from transformers import BertTokenizer, BertModel
-from transformers.optimization import AdamW
+from transformers import BertTokenizer
 import argparse
 import spacy
 
@@ -168,12 +167,7 @@ class ABSADatesetReader:
                 'train': './datasets/MAMS-ATSA/train.raw',
                 'test': './datasets/MAMS-ATSA/test.raw',
                 'validation': './datasets/MAMS-ATSA/validation.raw'
-            },
-            'other': {
-                'train': './datasets/datas/amazon_review.txt',
-                'test': './datasets/datas/amazon_label.txt'
             }
-
         }
         
         self.tokenizer = Tokenizer()
