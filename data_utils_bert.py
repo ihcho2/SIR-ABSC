@@ -48,7 +48,7 @@ class Tokenizer(object):
         words = tokenize(text)  # This is the parser's tokenizer.
         trans=[]
         realwords=[]
-
+        
         for word in words:
             wordpieces=self.tokenizer.tokenize(word)  # Tokenize again with BERT's tokenizer.
             tmplen=len(realwords)
@@ -57,7 +57,7 @@ class Tokenizer(object):
             trans.append([tmplen,len(realwords)])
             
             assert tmplen != len(realwords)
-            
+                
         sequence = [self.tokenizer._convert_token_to_id('[CLS]')]+[self.tokenizer._convert_token_to_id(w) for w in realwords]+[self.tokenizer._convert_token_to_id('[SEP]')]
         if len(sequence) == 0:
             sequence = [0]
@@ -239,23 +239,23 @@ if __name__ == '__main__':
     # 1. Laptop
     tmp=ABSADatesetReader(dataset='lap14', parser_info = args.parser_info)
     dataset='lap14'
-    with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
+    with open(dataset+'_datas_bert_' + args.parser_info + '.pkl', 'wb') as f:
         pickle.dump(tmp, f)
     
     # 2. Restaurant
     tmp=ABSADatesetReader(dataset='rest14', parser_info = args.parser_info)
     dataset='rest14'
-    with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
+    with open(dataset+'_datas_bert_' + args.parser_info + '.pkl', 'wb') as f:
         pickle.dump(tmp, f)
             
     # 3. Twitter
     tmp=ABSADatesetReader(dataset='twitter', parser_info = args.parser_info)
     dataset='twitter'
-    with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
+    with open(dataset+'_datas_bert_' + args.parser_info + '.pkl', 'wb') as f:
         pickle.dump(tmp, f)
             
     # 4. MAMS
     tmp=ABSADatesetReader(dataset='mams', parser_info = args.parser_info)
     dataset='mams'
-    with open(dataset+'_datas_' + args.parser_info + '.pkl', 'wb') as f:
+    with open(dataset+'_datas_bert_' + args.parser_info + '.pkl', 'wb') as f:
         pickle.dump(tmp, f)
