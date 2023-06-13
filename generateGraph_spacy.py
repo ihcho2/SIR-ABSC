@@ -40,6 +40,7 @@ def dependency_adj_matrix(text, edge_vocab, pos_vocab):
     edge = np.zeros((seq_len, seq_len)).astype('int32')
     edge1 = np.zeros((seq_len, seq_len)).astype('int32')
     pos_tag = np.zeros(seq_len).astype('int32')
+    root_tag = np.zeros(seq_len).astype('int32')
     
     for token in document:
         if token.i >= seq_len:
@@ -49,6 +50,9 @@ def dependency_adj_matrix(text, edge_vocab, pos_vocab):
             matrix[token.i][token.i] = 1
             matrix1[token.i][token.i] = 1
             pos_tag[token.i] = pos_vocab.get(token.pos_,1)
+            if token.dep_ == 'ROOT':
+                assert token.head.i == token.i
+                root_tag[token.i] = 1
             
             for child in token.children:
                 if child.i < seq_len:
@@ -57,7 +61,7 @@ def dependency_adj_matrix(text, edge_vocab, pos_vocab):
                     edge[token.i][child.i] = edge_vocab.get(child.dep_,1)
                     edge1[child.i][token.i] = edge_vocab.get(child.dep_,1)
                     
-    return matrix, matrix1, edge, edge1, pos_tag
+    return matrix, matrix1, edge, edge1, pos_tag, root_tag
 
 
 def concat(texts,aspect):
