@@ -227,7 +227,7 @@ if __name__ == '__main__':
     # 1. Laptop
     tmp=ABSADatesetReader(dataset='lap14', parser_info = args.parser_info)
     dataset='lap14'
-    with open(dataset+'_datas_bert_' + args.parser_info + '.pkl', 'wb') as f:
+    with open(dataset+'_datas_roberta_' + args.parser_info + '.pkl', 'wb') as f:
         pickle.dump(tmp, f)
     
     # 2. Restaurant
