@@ -53,8 +53,9 @@ class Tokenizer(object):
             
             realwords.extend(wordpieces)
             trans.append([tmplen,len(realwords)])
-#        unknownidx = 1_convert_token_to_id
-        #print(realwords)
+            
+            assert tmplen != len(realwords)
+            
         sequence = [self.tokenizer._convert_token_to_id('<s>')]+[self.tokenizer._convert_token_to_id(w) for w in realwords]+[self.tokenizer._convert_token_to_id('</s>')]
         if len(sequence) == 0:
             sequence = [0]
