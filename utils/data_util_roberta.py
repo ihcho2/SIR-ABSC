@@ -1,22 +1,18 @@
-import tokenization_word_roberta as tokenization
+import tokenization_word_roberta as tokenization_roberta
+import tokenization_word_bert as tokenization_bert
 import os
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 import numpy as np
 
-from data_utils import *
+from data_utils_roberta import *
 from bucket_iterator import BucketIterator
-from bucket_iterator_2_roberta import BucketIterator_2
 import pickle
 from transformers import BertTokenizer, RobertaTokenizer
 
 import spacy
 
-nlp = spacy.load('en_core_web_sm')
-
-# tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 
 def length2mask(length,maxlength):
     size=list(length.size())
@@ -50,13 +46,17 @@ class ReadData:
         self.train_raw = train_raw.readlines()
         
         self.opt = opt
+        assert 'bert_' not in self.opt.model_name
         self.train_examples = opt.processor.get_train_examples(opt.data_dir)
         self.eval_examples = opt.processor.get_dev_examples(opt.data_dir)
         if opt.task_name == 'mams':
             self.validation_examples = opt.processor.get_validation_examples(opt.data_dir)
         self.label_list = opt.processor.get_labels()
         
-        self.tokenizer = tokenization.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
+        if 'bert_' in opt.model_name:
+            self.tokenizer = tokenization_bert.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
+        elif 'roberta' in opt.model_name:
+            self.tokenizer = tokenization_roberta.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
         ######################
         print('-'*100)
         print("Combining with dataloader from DGEDT (e.g. elements like dependency graphs are needed).")
@@ -70,13 +70,60 @@ class ReadData:
         elif opt.task_name == 'mams':
             dgedt_dataset = 'mams'
             
-        absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta.pkl', 'rb'))
-        opt.edge_size=len(absa_dataset.edgevocab)
+        if self.opt.parser_info == 'spacy_sm_3.3.0' and 'bert_' in self.opt.model_name:
+            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_bert_spacy_sm_3.3.0.pkl', 'rb'))
+            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_bert_spacy_sm_3.3.0.pkl', 'rb'))
+            
+        elif self.opt.parser_info == 'spacy_sm_3.3.0' and 'roberta' in self.opt.model_name:
+            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_sm_3.3.0.pkl', 'rb'))
+            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_sm_3.3.0.pkl', 'rb'))
+            
+        elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'bert_' in self.opt.model_name:
+            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_bert_spacy_lg_3.5.0.pkl', 'rb'))
+            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_bert_spacy_lg_3.5.0.pkl', 'rb'))
+            
+        elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'roberta' in self.opt.model_name:
+            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_lg_3.5.0.pkl', 'rb'))
+            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_lg_3.5.0.pkl', 'rb'))
+            
+        if 'spacy_sm' in self.opt.parser_info:
+            self.nlp = spacy.load('en_core_web_sm')
+        elif 'spacy_lg' in self.opt.parser_info:
+            self.nlp = spacy.load('en_core_web_lg')
+            
+        with open('./datasets/' + self.opt.parser_info + '.global_edge_vocab', 'rb') as file:
+            self.edge_vocab_ = pickle.load(file)
+        with open('./datasets/' + self.opt.parser_info + '.global_pos_vocab', 'rb') as file:
+            self.pos_vocab_ = pickle.load(file)
+            
+        self.edge_vocab = {}
+        self.pos_vocab = {}
         
-        self.train_data_loader = BucketIterator_2(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True, input_format = self.opt.input_format)
-        self.test_data_loader = BucketIterator_2(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format)
+        for key in self.edge_vocab_.keys():
+            self.edge_vocab[self.edge_vocab_[key]] = key
+        for key in self.pos_vocab_.keys():
+            self.pos_vocab[self.pos_vocab_[key]] = key
+        
+        print('-'*77)
+        print(f"* Loaded global edge vocab from {'./datasets/' + self.opt.parser_info + '.global_edge_vocab'}")
+        print(f"* Loaded global pos vocab from {'./datasets/' + self.opt.parser_info + '.global_pos_vocab'}")
+            
+        if os.path.exists(f'./datasets/{self.opt.parser_info}_global_DEP_info_emb'):
+            with open(f'./datasets/{self.opt.parser_info}_global_DEP_info_emb', 'rb') as file:
+                self.dep_vocab = pickle.load(file)
+        else:
+            self.dep_vocab = {'None': 0, '[s] or [CLS]': 1, '[g]': 2}
+            self.create_new_global_dep()
+                
+        self.dep2idx = {}
+        for key in self.dep_vocab.keys():
+            self.dep2idx[self.dep_vocab[key]] = key     
+            
+            
+        self.train_data_loader = BucketIterator(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True, input_format = self.opt.input_format, model_name = self.opt.model_name)
+        self.test_data_loader = BucketIterator(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format, model_name = self.opt.model_name)
         if opt.task_name == 'mams':
-            self.eval_data_loader = BucketIterator_2(data=absa_dataset.validation_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format)
+            self.eval_data_loader = BucketIterator(data=absa_dataset.validation_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format, model_name = self.opt.model_name)
         
         self.DGEDT_train_data = self.train_data_loader.data
         self.DGEDT_train_batches = self.train_data_loader.batches
@@ -88,307 +135,434 @@ class ReadData:
             self.DGEDT_validation_data = self.eval_data_loader.data
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
-        if opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
-                              'roberta_gcls_vdc_auto', 'roberta_gcls_star', 'roberta_gcls_m1']:
             
-            if opt.graph_type == 'dg':
-                self.train_gcls_attention_mask, train_cumul_DG_words, train_total_tokens = self.process_DG(self.DGEDT_train_data,
-                                                                                           path_types = self.opt.path_types)
-                self.eval_gcls_attention_mask, eval_cumul_DG_words, eval_total_tokens = self.process_DG(self.DGEDT_test_data,
-                                                                                           path_types = self.opt.path_types)
-                if opt.task_name == 'mams':
-                    self.validation_gcls_attention_mask, validation_cumul_DG_words, validation_total_tokens \
-                    = self.process_DG(self.DGEDT_validation_data,path_types = self.opt.path_types)
-                
-            elif opt.graph_type == 'sd':
-                self.train_gcls_attention_mask  = self.process_surface_distance(self.DGEDT_train_data)
-                self.eval_gcls_attention_mask = self.process_surface_distance(self.DGEDT_test_data)
-                self.validation_gcls_attention_mask = self.process_surface_distance(self.DGEDT_validation_data)
-            
-            
-        ######################
+        self.train_gcls_attention_mask, _, _, self.train_VDC_info, self.train_DEP_info, \
+        self.train_POS_info, self.train_hVDC, _ = \
+        self.process_DG(self.DGEDT_train_data, data_type = 'train_data')
         
+        
+        self.eval_gcls_attention_mask, _, _,self.eval_VDC_info, self.eval_DEP_info, \
+        self.eval_POS_info, self.eval_hVDC, _ = \
+        self.process_DG(self.DGEDT_test_data, data_type = 'eval_data')
+        
+        if opt.task_name == 'mams':
+            self.validation_gcls_attention_mask, _, _, self.validation_VDC_info, \
+            self.validation_DEP_info, self.validation_POS_info, self.validation_hVDC, _ \
+            = self.process_DG(self.DGEDT_validation_data, data_type = 'validation_data')
+                
+        ######################
         self.train_data, self.train_dataloader, self.train_tran_indices, self.train_span_indices, \
-        self.train_extended_attention_mask, self.train_VDC_info, self.train_sgg_info  = self.get_data_loader(examples=self.train_examples, type='train_data', gcls_attention_mask =self.train_gcls_attention_mask,
-                     path_types = self.opt.path_types, cumul_DG_words = train_cumul_DG_words, total_tokens = train_total_tokens
-                                                                                                            )
+        self.train_extended_attention_mask, self.train_current_VDC  = self.get_data_loader(examples=self.train_examples, 
+                                                                                           type='train_data', 
+                                                                   gcls_attention_mask =self.train_gcls_attention_mask,
+                                                                   hVDC = self.train_hVDC)
         
         self.eval_data, self.eval_dataloader, self.eval_tran_indices, self.eval_span_indices, \
-        self.eval_extended_attention_mask, self.eval_VDC_info , self.eval_sgg_info = self.get_data_loader(examples=self.eval_examples, type='eval_data', gcls_attention_mask = self.eval_gcls_attention_mask, 
-                     path_types = self.opt.path_types, cumul_DG_words = eval_cumul_DG_words, total_tokens = eval_total_tokens)
+        self.eval_extended_attention_mask, self.eval_current_VDC = self.get_data_loader(examples=self.eval_examples, type='eval_data', 
+                                                                 gcls_attention_mask = self.eval_gcls_attention_mask, 
+                                                                 hVDC = self.eval_hVDC)
+        
         if opt.task_name == 'mams':
             self.validation_data, self.validation_dataloader, self.validation_tran_indices, self.validation_span_indices, \
-            self.validation_extended_attention_mask, self.validation_VDC_info, self.validation_sgg_info = self.get_data_loader(examples=self.validation_examples, type='validation',gcls_attention_mask = self.validation_gcls_attention_mask,path_types = self.opt.path_types, cumul_DG_words = validation_cumul_DG_words, total_tokens = validation_total_tokens)
+            self.validation_extended_attention_mask, self.validation_current_VDC= self.get_data_loader(examples=self.validation_examples, 
+                                                                      type='validation',
+                                                                      gcls_attention_mask = self.validation_gcls_attention_mask,
+                                                                      hVDC = self.validation_hVDC)
             
-                  
-    def process_DG(self, DGEDT_train_data, path_types = None):
-        length_R_trans = {}
-        cumul_R_trans = {}
-        cumul_DG_words = {}
-        total_tokens = [] # Used for doing DG analysis
+            
+    def create_new_global_dep(self):
+        for dataset in ['lap14', 'rest14', 'twitter', 'mams']:
+            if self.opt.parser_info == 'spacy_sm_3.3.0' and 'bert_' in self.opt.model_name:
+                dataset_=pickle.load(open(dataset+'_datas_bert_spacy_sm_3.3.0.pkl', 'rb'))
+            elif self.opt.parser_info == 'spacy_sm_3.3.0' and 'roberta' in self.opt.model_name:
+                dataset_=pickle.load(open(dataset+'_datas_roberta_spacy_sm_3.3.0.pkl', 'rb'))
+            elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'bert_' in self.opt.model_name:
+                dataset_=pickle.load(open(dataset+'_datas_bert_spacy_lg_3.5.0.pkl', 'rb'))
+            elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'roberta' in self.opt.model_name:
+                dataset_=pickle.load(open(dataset+'_datas_roberta_spacy_lg_3.5.0.pkl', 'rb'))
+                
+            train_data_loader = BucketIterator(data=dataset_.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True, input_format = self.opt.input_format, model_name = self.opt.model_name)
+            
+            self.get_dep_labels(train_data_loader.data)
+            
+            print('len(self.dep_vocab): ', len(self.dep_vocab))
+            
+        with open(f'./datasets/{self.opt.parser_info}_global_DEP_info_emb', 'wb') as file:
+            pickle.dump(self.dep_vocab, file)
         
-        self.max_VDC = 11
         
-        gcls_attention_mask = torch.zeros((len(DGEDT_train_data), self.max_VDC+1, path_types, 128), dtype=torch.float)
+    def get_dep_labels(self, DGEDT_train_data):
+        edge_merge = {'self': 'self', '<pad>': '<pad>', 'punct': 'punct', 'nsubj': 'sbj', 'det': 'dep', 'prep': 'prep', 
+                      'pobj': 'arg', 'advmod': 'mod', 'amod': 'mod', 'conj': 'conj', 'dobj': 'dobj', 'aux': 'aux', 'cc': 'cc',
+                      'compound': 'mod', 'acomp': 'arg', 'advcl': 'mod', 'ccomp': 'arg', 'mark': 'dep', 'xcomp': 'arg', 
+                      'poss': 'mod', 'nummod': 'mod', 'relcl': 'mod', 'neg': 'neg', 'attr': 'arg', 'prt': 'dep', 
+                      'npadvmod': 'mod', 'auxpass': 'aux', 'pcomp': 'arg', 'nmod': 'mod', 'nsubjpass': 'sbj', 'acl': 'mod', 
+                      'appos': 'mod', 'quantmod': 'mod', 'dep': 'dep', 'expl': 'sbj', 'predet': 'mod', 'dative': 'arg',
+                      'intj': 'dep', 'case': 'dep', 'oprd': 'arg', 'csubj': 'sbj', 'parataxis': 'dep', 'agent': 'arg',
+                      'preconj': 'mod', 'meta': 'dep'}
+        
+        AOBG_label = []
+        
         for i in range(len(DGEDT_train_data)):
-            length_R_trans[i] = {}
-            cumul_R_trans[i] = {}
-            cumul_DG_words[i] = {}
-            for j in range(self.max_VDC+1):
-                length_R_trans[i][j] = {}
-                cumul_R_trans[i][j] = {}
-                cumul_DG_words[i][j] = []
-                for k in range(min(2**j, path_types)):
-                    length_R_trans[i][j][k] = []
-                    cumul_R_trans[i][j][k] = []
+            AOBG_label.append({})
+            dg = DGEDT_train_data[i]['dependency_graph'][0] + DGEDT_train_data[i]['dependency_graph'][1]
+            dg[dg>=1] = 1
+            dg = torch.tensor(dg)
+            
+            edge_1 = DGEDT_train_data[i]['dependency_graph'][2] 
+            edge_2 = DGEDT_train_data[i]['dependency_graph'][3] 
+            
+            for j in range(dg.size(0)): 
+                AOBG_label[i][j] = {}
+                AOBG_label[i][j]['dep_label'] = 'None' 
+                
+            used_trans = []
+            last_trans = []
+            for k in range(len(DGEDT_train_data[i]['span_indices'])): 
+                tran_start = DGEDT_train_data[i]['span_indices'][k][0]  # The starting tran_id (=word) of the target.
+                tran_end = DGEDT_train_data[i]['span_indices'][k][1]    # The ending tran_id (=word) of the target.
+                
+                for item in range(tran_start, tran_end):
+                    AOBG_label[i][item]['dep_label'] = 'self'
+                    used_trans.append(item)
+                    last_trans.append(item)
                     
-        target_idx = []
+            edge_merge = {'self': 'self', '<pad>': '<pad>', 'punct': 'punct', 'nsubj': 'sbj', 'det': 'dep', 'prep': 'prep', 
+                      'pobj': 'arg', 'advmod': 'mod', 'amod': 'mod', 'conj': 'conj', 'dobj': 'dobj', 'aux': 'aux', 'cc': 'cc',
+                      'compound': 'mod', 'acomp': 'arg', 'advcl': 'mod', 'ccomp': 'arg', 'mark': 'dep', 'xcomp': 'arg', 
+                      'poss': 'mod', 'nummod': 'mod', 'relcl': 'mod', 'neg': 'neg', 'attr': 'arg', 'prt': 'dep', 
+                      'npadvmod': 'mod', 'auxpass': 'aux', 'pcomp': 'arg', 'nmod': 'mod', 'nsubjpass': 'sbj', 'acl': 'mod', 
+                      'appos': 'mod', 'quantmod': 'mod', 'dep': 'dep', 'expl': 'sbj', 'predet': 'mod', 'dative': 'arg',
+                      'intj': 'dep', 'case': 'dep', 'oprd': 'arg', 'csubj': 'sbj', 'parataxis': 'dep', 'agent': 'arg',
+                      'preconj': 'mod', 'meta': 'dep'}
+            
+            for l in range(1, 12):
+                last_trans_ = []
+                for item in last_trans:
+                    x = (dg[item] == 1).nonzero(as_tuple=True)[0]
+                    for item_ in x:
+                        if int(item_) not in used_trans:
+                            used_trans.append(int(item_))
+                            last_trans_.append(int(item_))
+                            if edge_1[item][int(item_)] != 0 and edge_2[item][int(item_)] != 0:
+                                print('Something wrong')
+                            elif edge_1[item][int(item_)] != 0:
+                                if l < 3:
+                                    AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';+'+\
+                                                                             edge_merge[self.edge_vocab[edge_1[item]
+                                                                                                        [int(item_)]]]
+                                else:
+                                    AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
+                            elif edge_2[item][int(item_)] != 0:
+                                if l < 3:
+                                    AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';-'+\
+                                                                             edge_merge[self.edge_vocab[edge_2[item]
+                                                                                                        [int(item_)]]]
+                                else:
+                                    AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
+                            else:
+                                print('Something wrong')
+                                
+                last_trans = last_trans_
+                
+        for i in range(len(DGEDT_train_data)):
+            for j in range(len(AOBG_label[i])):
+                if AOBG_label[i][j]['dep_label'] not in self.dep_vocab.keys():
+                    self.dep_vocab[AOBG_label[i][j]['dep_label']] = len(self.dep_vocab)
+        
+                  
+    def process_DG(self, DGEDT_train_data, data_type = 'train_data'):
+        total_tokens = [] # Used for doing DG analysis
+        total_words = []
+        
+        AOBG_label = []
+        hVDC_word = []
+        hVDC_token = []
+        second_g_idx = []
+        
+        VDC_info = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99) 
+        DEP_info = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99) 
+        POS_info = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99) 
+        
+        surface_VDC_info_token_level = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99.0) 
+        surface_VDC_info_word_level = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99.0) # 같은 word에서 나온 토큰은 같은 distance 적용.
+        
+        gcls_attention_mask = torch.zeros((len(DGEDT_train_data), 12, 128), dtype=torch.float)
+        gcls_attention_mask_surface_distance_word_level = torch.zeros((len(DGEDT_train_data), 12, 128), dtype=torch.float)
+        gcls_attention_mask_surface_distance_token_level = torch.zeros((len(DGEDT_train_data), 12, 128), dtype=torch.float)
+        
+        # Just in case we might need to use VDC_info in word level (e.g., hVDC).
+        number_of_words_L = torch.zeros((len(DGEDT_train_data), 12), dtype=torch.float) # distance L에 몇 개의 word
+        
         
         for i in range(len(DGEDT_train_data)):
+            AOBG_label.append({})
+            
             dg = DGEDT_train_data[i]['dependency_graph'][0] + DGEDT_train_data[i]['dependency_graph'][1]
             dg[dg>=1] = 1
             dg_in = DGEDT_train_data[i]['dependency_graph'][0]
             dg_out = DGEDT_train_data[i]['dependency_graph'][1]
             dg = torch.tensor(dg)
-            dg_in = torch.tensor(dg_in)
-            dg_out = torch.tensor(dg_out)
+            
+            edge_1 = DGEDT_train_data[i]['dependency_graph'][2] 
+            edge_2 = DGEDT_train_data[i]['dependency_graph'][3] 
             
             sep_pos = len(DGEDT_train_data[i]['text_indices']) 
             
             total_tokens.append(sep_pos-2)
+            second_g_idx.append(sep_pos+1)
+            total_words.append(dg.size(0))
             
-            assert len(DGEDT_train_data[i]['dependency_graph'][0]) <= sep_pos -2
+#             if len(DGEDT_train_data[i]['span_indices']) != 1:
+#                 print('Multiple same aspects in the sentence : ', i)
+            assert len(DGEDT_train_data[i]['span_indices']) == 1 # For Lap14, Rest14, and MAMS.
+    
+            target_begin_word_idx = DGEDT_train_data[i]['span_indices'][0][0] # Beginning of the target aspect in word-level.
+            target_end_word_idx = DGEDT_train_data[i]['span_indices'][0][1] # End of the target aspect in word-level.
             
-            if len(DGEDT_train_data[i]['span_indices']) != 1:
-                print('Multiple same aspects in the sentence : ', i)
-#             assert len(DGEDT_train_data[i]['span_indices']) == 1    # At least for Laptop and Restaurant.
-            
-            length_0_trans = []
-            
-            for k in range(len(DGEDT_train_data[i]['span_indices'])):
-#                 if k == 1:
-#                     break
-                tran_start = DGEDT_train_data[i]['span_indices'][k][0]
-                tran_end = DGEDT_train_data[i]['span_indices'][k][1]
+            ##########
+            if self.opt.input_format == 'td_X':
+                A = 1
+            elif 'g_infront_of' in self.opt.input_format:
+                A = 2
+            elif 'g' in self.opt.input_format:
+                A = 2
                 
-                for item in range(tran_start, tran_end):
-                    length_R_trans[i][0][0].append([item])
-                    cumul_R_trans[i][0][0].append([item])
-                    length_0_trans.append(item)
-                    cumul_DG_words[i][0].append(item)
+            target_begin_token_idx = DGEDT_train_data[i]['tran_indices'][target_begin_word_idx][0] + A
+            target_end_token_idx = DGEDT_train_data[i]['tran_indices'][target_end_word_idx-1][1] + A
+            # might need to change this when using Twitter since there could be multiple aspects.
             
+            ## Initialize AOBG labels
+            AOBG_label.append({})
+            
+            # 나중에 지울 것들 
+            assert dg.size(0) == len(DGEDT_train_data[i]['tran_indices'])
+            
+            # Iterating over all words (parsed by the parser's tokenizer).
+            for j in range(dg.size(0)): 
+                AOBG_label[i][j] = {}
+                AOBG_label[i][j]['token_idx_start'] = 0 
+                AOBG_label[i][j]['token_idx_end'] = 0
+                
+                if j < target_begin_word_idx:
+                    AOBG_label[i][j]['surface_distance'] = target_begin_word_idx - j # word-level distance.
+                elif target_begin_word_idx <= j and j <target_end_word_idx:
+                    AOBG_label[i][j]['surface_distance'] = 0
+                else:
+                    AOBG_label[i][j]['surface_distance'] = j - target_end_word_idx + 1
+                    
+                AOBG_label[i][j]['syn_distance'] = 99
+                AOBG_label[i][j]['dep_label'] = 'None' 
+                AOBG_label[i][j]['pos_tag'] = DGEDT_train_data[i]['dependency_graph'][-2][j]
+                AOBG_label[i][j]['is_root'] = DGEDT_train_data[i]['dependency_graph'][-1][j]
+                
+                # Define A
+                if self.opt.input_format == 'TD_X':
+                    A = 1
+                elif 'g_infront_of' in self.opt.input_format:
+                    if j >= target_begin_word_idx:
+                        A = 2
+                    else:
+                        A = 1
+                elif 'g' in self.opt.input_format:
+                    A = 2
+                
+                AOBG_label[i][j]['token_idx_start'] = DGEDT_train_data[i]['tran_indices'][j][0]+A
+                AOBG_label[i][j]['token_idx_end'] = DGEDT_train_data[i]['tran_indices'][j][1]+A
+                
+            # Now filling in the 'syn_distance', 'dep_label'
             used_trans = []
-            for l in range(1, self.max_VDC+1):
-                dg_ = dg
-                cumul_R_trans[i][l][0] = cumul_R_trans[i][l-1][0].copy()
-                cumul_DG_words[i][l] = cumul_DG_words[i][l-1].copy()
+            last_trans = []
+            for k in range(len(DGEDT_train_data[i]['span_indices'])): 
+                tran_start = DGEDT_train_data[i]['span_indices'][k][0]  # The starting tran_id (=word) of the target.
+                tran_end = DGEDT_train_data[i]['span_indices'][k][1]    # The ending tran_id (=word) of the target.
                 
-                for path in length_R_trans[i][l-1][0]:
-                    last_node = path[-1]
-                    if len(path) > 1:
-                        prev_node = path[-2]
-                    else:
-                        prev_node = None
-
-                    x = (dg_[last_node] == 1).nonzero(as_tuple=True)[0]
-                    assert last_node <= len(dg_)
-                    
-                    for item in x:
-                        if int(item) not in length_0_trans:
-                            if path_types == 1:
-                                if int(item) in used_trans:
-                                    continue
-                            if int(item) != last_node and int(item) != prev_node:
-                                    length_R_trans[i][l][0].append(path+[int(item)])
-                                    cumul_R_trans[i][l][0].append(path+[int(item)])
-                                    cumul_DG_words[i][l].append(int(item))
-                                    used_trans.append(int(item))
-                                            
-            
-            ## 점검
-            for j in range(len(length_R_trans[i])):
-                for k in range(len(length_R_trans[i][j])):
-                    for item in length_R_trans[i][j][k]:
-                        assert len(item) == j+1
-            
-            
-            ## 몇 개 선택해서 점검 진행.
-#             if len(cumul_DG_words[i][5]) != len(dg) and len(dg) < 20:
-#                 print('='*77)
-#                 print('i: ', i)
-#                 print('dg: ', dg)
-#                 print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'])))
-#                 print('target: ', tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['aspect_indices'])))
-#                 print('len(dg): ', len(dg))
-#                 print('-'*77)
-#                 for j in range(len(cumul_DG_words[i])):
-#                     print(f'Length {j} trans: ', len(cumul_DG_words[i][j]))
-#                     print('words: ', cumul_DG_words[i][j])
-#                     for item in cumul_DG_words[i][j]:
-#                         start = DGEDT_train_data[i]['tran_indices'][item][0]+1
-#                         end = DGEDT_train_data[i]['tran_indices'][item][1]+1
-#                         print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'][start:end])))
-#                     print('-'*77)
-                
-            
-            # Converting to gcls_att_mask. 
-            aspect_length = len(DGEDT_train_data[i]['aspect_indices']) - 2
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_ffn', 'roberta_gcls_m1', 'roberta_gcls_vdc_auto']:
-                A = 2
-            elif self.opt.model_name in ['roberta_gcls_2']:
-                A = 3
-            elif self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta', 'roberta_fm']:
-                A = 1
-            
-            # target_idx
-            for item in length_R_trans[i][0][0]:
-                assert len(item) == 1
-                target_idx.append(DGEDT_train_data[i]['tran_indices'][item[0]][0] + A)
-                break
-            
-            # Construct gcls_attention_mask
-            for j in range(len(length_R_trans[i])):
-                for k in range(len(length_R_trans[i][j])):
-                    att_mask = torch.zeros([128])
-                    for item in cumul_R_trans[i][j][k]:
-                        start_idx = DGEDT_train_data[i]['tran_indices'][item[-1]][0] + A
-                        end_idx = DGEDT_train_data[i]['tran_indices'][item[-1]][1] + A
-                        
-                        att_mask[start_idx:end_idx] = 1
-                        
-                    gcls_attention_mask[i][j][k] = att_mask
-
-        print('='*77)
-        print('reporting DG statistics')
-        
-        total_toks = 0
-        total_trans = 0
-        self.R_tokens = torch.zeros((self.max_VDC+1, 1), dtype = torch.float)
-        self.R_trans = torch.zeros((self.max_VDC+1, 1), dtype = torch.float)
-        
-        for i in range(len(DGEDT_train_data)):
-            total_toks += total_tokens[i]
-            total_trans += len(DGEDT_train_data[i]['dependency_graph'][0])
-            
-            for j in range(self.max_VDC+1):
-#                 print(f'VDC {j} tokens: ', torch.sum(gcls_attention_mask[i][j][0]))
-                x = (gcls_attention_mask[i][j][0] == 1).nonzero(as_tuple=True)[0]
-#                 print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'])[x-1]))
-#                 print('-'*77)
-                self.R_tokens[j] += torch.sum(gcls_attention_mask[i][j][0])
-                self.R_trans[j] += len(cumul_DG_words[i][j])
-                
-#             for j in range(5+1):
-#                 for k in range(path_types):
-#                     R_tokens[j,k] += torch.sum(gcls_attention_mask[i][j][k])
-                    
-        for i in range(self.max_VDC+1):
-            print('-'*77)
-            print('Range: ', i)
-            print(f'portion of tokens in range {i} / path type {j}: ', self.R_tokens[i] / total_toks)
-            print(f'portion of words in range {i} / path type {j}: ', self.R_trans[i] / total_trans)
-            
-                
-        return gcls_attention_mask, cumul_DG_words, total_tokens
-
-    def process_surface_distance(self, DGEDT_train_data, layer_L):
-        final_all_paths = []
-        length_0_trans = []
-        target_idx = []
-        
-        gcls_attention_mask = torch.empty((len(DGEDT_train_data), max(layer_L)+1, 128), dtype=torch.float)
-
-        for i in range(len(DGEDT_train_data)):
-            all_paths = []
-            length_0_trans.append([])
-
-#             assert len(DGEDT_train_data[i]['span_indices']) == 1    # At least for Laptop and Restaurant.
-            for j in range(len(DGEDT_train_data[i]['span_indices'])):
-                tran_start = DGEDT_train_data[i]['span_indices'][j][0]
-                tran_end = DGEDT_train_data[i]['span_indices'][j][1]
-
                 for item in range(tran_start, tran_end):
-                    all_paths.append([item])
-                    length_0_trans[i].append(item)
-
-#             length_0_trans[i] = [item for item in range(tran_start, tran_end)]
-
-            final_all_paths.append(all_paths)
+                    number_of_words_L[i][0] += 1
+                    
+                    # 나중에 지울 것
+                    assert AOBG_label[i][item]['surface_distance'] == 0
+                    
+                    AOBG_label[i][item]['syn_distance'] = 0  # target itself => syn_distance = 0
+                    AOBG_label[i][item]['dep_label'] = 'self' 
+                    used_trans.append(item)
+                    last_trans.append(item)
+                    
+            hVDC_found = False # word-level hVDC
+            hVDC_found_token = False # token-level hVDC
             
-            # Now let's make the gcls_att_mask.
-            if self.opt.model_name in ['roberta_gcls', 'roberta_gcls_ffn', 'roberta_gcls_vdc_auto', 'roberta_gcls_m1']:
-                A = 2
-            elif self.opt.model_name in ['roberta_gcls_2']:
-                A = 3
-            elif self.opt.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_fm']:
-                A = 1
+            edge_merge = {'self': 'self', '<pad>': '<pad>', 'punct': 'punct', 'nsubj': 'sbj', 'det': 'dep', 'prep': 'prep', 
+                      'pobj': 'arg', 'advmod': 'mod', 'amod': 'mod', 'conj': 'conj', 'dobj': 'dobj', 'aux': 'aux', 'cc': 'cc',
+                      'compound': 'mod', 'acomp': 'arg', 'advcl': 'mod', 'ccomp': 'arg', 'mark': 'dep', 'xcomp': 'arg', 
+                      'poss': 'mod', 'nummod': 'mod', 'relcl': 'mod', 'neg': 'neg', 'attr': 'arg', 'prt': 'dep', 
+                      'npadvmod': 'mod', 'auxpass': 'aux', 'pcomp': 'arg', 'nmod': 'mod', 'nsubjpass': 'sbj', 'acl': 'mod', 
+                      'appos': 'mod', 'quantmod': 'mod', 'dep': 'dep', 'expl': 'sbj', 'predet': 'mod', 'dative': 'arg',
+                      'intj': 'dep', 'case': 'dep', 'oprd': 'arg', 'csubj': 'sbj', 'parataxis': 'dep', 'agent': 'arg',
+                      'preconj': 'mod', 'meta': 'dep'}
             
-            sep_pos = len(DGEDT_train_data[i]['text_indices'])
-            for j in range(max(layer_L)+1):
-                att_mask = torch.zeros([128])
-                for item_ in length_0_trans[i]: 
-                    start_idx = DGEDT_train_data[i]['tran_indices'][item_][0] + A - j
-                    end_idx = DGEDT_train_data[i]['tran_indices'][item_][1] + A + j
-                
-                    if start_idx >= A:
-                        att_mask[start_idx:end_idx] = 1
-                    else:
-                        att_mask[A:end_idx] = 1
-                    att_mask[sep_pos:128] = 0
+            for l in range(1, 12):
+                last_trans_ = [] 
+                number_of_words_L[i][l] = number_of_words_L[i][l-1] # 누적으로 하는게 편할 듯.
+                for item in last_trans:
+                    x = (dg[item] == 1).nonzero(as_tuple=True)[0]
+                    for item_ in x:
+                        if int(item_) not in used_trans:
+                            used_trans.append(int(item_))
+                            last_trans_.append(int(item_))
+                            number_of_words_L[i][l] += 1
                             
-                gcls_attention_mask[i][j] = att_mask
-
-#             if torch.sum(gcls_attention_mask[i][1]) - torch.sum(gcls_attention_mask[i][0]) != 2:
-#                 print('='*77)
-#                 print(i)
-#                 print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices']))
-#                 print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices']))
-#                 print('='*77)
-#             if torch.sum(gcls_attention_mask[i][2]) - torch.sum(gcls_attention_mask[i][1]) != 2:
-#                 print(i)
-#                 print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['text_indices']))
-#                 print(tokenizer.convert_ids_to_tokens(DGEDT_train_data[i]['aspect_indices']))
-
-        return gcls_attention_mask
+                            # 나중에 지울 것.
+                            assert AOBG_label[i][int(item_)]['syn_distance'] == 99 # 중복 없음 확인.
+                            AOBG_label[i][int(item_)]['syn_distance'] = l
+    
+                            if edge_1[item][int(item_)] != 0 and edge_2[item][int(item_)] != 0:
+                                print('Something wrong')
+                
+                            elif edge_1[item][int(item_)] != 0:
+                                if l < 3:
+                                    AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';+'+\
+                                                                             edge_merge[self.edge_vocab[edge_1[item]
+                                                                                                        [int(item_)]]]
+                                else:
+                                    AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
+                                    
+                            elif edge_2[item][int(item_)] != 0:
+                                if l < 3:
+                                    AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';-'+\
+                                                                             edge_merge[self.edge_vocab[edge_2[item]
+                                                                                                        [int(item_)]]]
+                                else:
+                                    AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
+                            else:
+                                print('Something wrong')
+                                
+                last_trans = last_trans_
+                if (number_of_words_L[i][l]/total_words[i] >= self.opt.VDC_threshold) and hVDC_found == False:
+                    hVDC_found = True
+                    hVDC_word.append(l)
+                    
+            if hVDC_found == False:
+                hVDC_word.append(11)
+                
+            if hVDC_found_token == False:
+                hVDC_token.append(11)
+                            
+            for word in range(len(AOBG_label[i])):
+                start = AOBG_label[i][word]['token_idx_start']
+                end = AOBG_label[i][word]['token_idx_end']
+                
+                # 1. Create VDC_info, surface_VDC_info_word_level, surface_VDC_info_token_level
+                VDC_info[i][start:end] = AOBG_label[i][word]['syn_distance']
+                surface_VDC_info_word_level[i][start:end] = AOBG_label[i][word]['surface_distance']
+                
+                for p in range(start, end):
+                    if p < target_begin_token_idx:
+                        surface_VDC_info_token_level[i][p] = target_begin_token_idx - p
+                    elif p < target_end_token_idx:
+                        surface_VDC_info_token_level[i][p] = 0
+                    else:
+                        surface_VDC_info_token_level[i][p] = p - target_end_token_idx + 1
+                        
+                # 2. POS_info
+                POS_info[i][start:end] = AOBG_label[i][word]['pos_tag']
+                
+                # 3. DEP_info
+                if AOBG_label[i][word]['dep_label'] not in self.dep_vocab:
+                    # 나중에 지우기.
+                    assert data_type != 'train_data'
+                    DEP_info[i][start:end] = 0
+                else:
+                    DEP_info[i][start:end] = self.dep_vocab[AOBG_label[i][word]['dep_label']]
+                
+                # s, g 위치 처리.
+                if self.opt.input_format == 'TD_X':
+                    VDC_info[i][0] = 129
+                    POS_info[i][0] = len(self.pos_vocab) 
+                    DEP_info[i][0] = self.dep_vocab['[s] or [CLS]']
+                    
+                elif 'g_infront_of' in self.opt.input_format:
+                    VDC_info[i][0] = 129
+                    VDC_info[i][target_begin_token_idx-1] = 999
+                    VDC_info[i][second_g_idx[i]] = 130 # or 999
+                    
+                    POS_info[i][0] = len(self.pos_vocab)
+                    POS_info[i][target_begin_token_idx-1] = len(self.pos_vocab) + 1
+                    POS_info[i][second_g_idx[i]] = len(self.pos_vocab) + 2 # or len(self.pos_vocab) + 1
+                    
+                    DEP_info[i][0] = DEP_info[i][0] = self.dep_vocab['[s] or [CLS]']
+                    DEP_info[i][target_begin_token_idx-1] = self.dep_vocab['[g]']
+                    DEP_info[i][second_g_idx[i]] = len(self.dep_vocab) + 1 # or self.dep_vocab['[g]']
+                    
+                elif 'g' in self.opt.input_format:
+                    VDC_info[i][0] = 129
+                    VDC_info[i][1] = 999
+                    VDC_info[i][second_g_idx[i]] = 130 # or 999
+                    
+                    POS_info[i][0] = len(self.pos_vocab)
+                    POS_info[i][1] = len(self.pos_vocab)+1
+                    POS_info[i][second_g_idx[i]] = len(self.pos_vocab) + 2 # or len(self.pos_vocab) + 1
+                    
+                    DEP_info[i][0] = len(self.dep_vocab)
+                    DEP_info[i][1] = self.dep_vocab['[g]']
+                    DEP_info[i][second_g_idx[i]] = len(self.dep_vocab) + 1 # or self.dep_vocab['[g]']
+                    
             
-    ###### For implementing RoBERTa-LCF and RoBERTa-LCFS 
-    def get_cdw_vec(self, local_indices, aspect_indices, aspect_begin, syntactical_dist=None):
-        SRD = 1.0
-        cdw_vec = np.zeros((self.opt.max_seq_length), dtype=np.float32)
+            for j in range(12):
+                gcls_attention_mask[i][j] = (VDC_info[i]<=j).float()
+                gcls_attention_mask_surface_distance_word_level[i][j] = (surface_VDC_info_word_level[i]<=j).float()
+                gcls_attention_mask_surface_distance_token_level[i][j] = (surface_VDC_info_token_level[i]<=j).float()
+                
+                # s,g 처리
+                gcls_attention_mask[i][j][0] = 1.0
+                gcls_attention_mask_surface_distance_word_level[i][j][0] = 1.0
+                gcls_attention_mask_surface_distance_token_level[i][j][0] = 1.0
+                
+                if 'g_infront_of' in self.opt.input_format:
+                    gcls_attention_mask[i][j][target_begin_token_idx-1] = 1.0
+                    gcls_attention_mask_surface_distance_word_level[i][j][target_begin_token_idx-1] = 1.0
+                    gcls_attention_mask_surface_distance_token_level[i][j][target_begin_token_idx-1] = 1.0
+                    
+                elif 'g' in self.opt.input_format:
+                    gcls_attention_mask[i][j][1] = 1.0
+                    gcls_attention_mask_surface_distance_word_level[i][j][1] = 1.0
+                    gcls_attention_mask_surface_distance_token_level[i][j][1] = 1.0
+            
+            
+#         print('='*77)
+#         print('reporting DG statistics')
         
-        text_len = int((local_indices == 2).nonzero(as_tuple=True)[0][0] +1)
-        aspect_len = int((aspect_indices == 2).nonzero(as_tuple=True)[0][0] - 1)
+#         total_toks = 0
+#         total_trans = 0
+#         self.R_tokens = torch.zeros((12, 1), dtype = torch.float)
+#         self.R_trans = torch.zeros((12, 1), dtype = torch.float)
         
-        if syntactical_dist is not None:
-            for i in range(min(text_len, self.opt.max_seq_length)):
-                if syntactical_dist[i] > SRD:
-                    w = 1 - syntactical_dist[i] / text_len
-                    cdw_vec[i] = w
-                else:
-                    cdw_vec[i] = 1
-        else:
-            local_context_begin = max(0, aspect_begin - SRD)
-            local_context_end = min(aspect_begin + aspect_len + SRD - 1, self.opt.max_seq_length)
-            for i in range(min(text_len, self.opt.max_seq_length)):
-                if i < local_context_begin:
-                    w = 1 - (local_context_begin - i) / text_len
-                elif local_context_begin <= i <= local_context_end:
-                    w = 1
-                else:
-                    w = 1 - (i - local_context_end) / text_len
-                try:
-                    assert 0 <= w <= 1  # exception
-                except:
-                    pass
-                    # print('Warning! invalid CDW weight:', w)
-                cdw_vec[i] = w
+#         for i in range(len(DGEDT_train_data)):
+#             total_toks += total_tokens[i]
+#             total_trans += len(DGEDT_train_data[i]['dependency_graph'][0])
+            
+#             for j in range(12):
+# #                 print(f'VDC {j} tokens: ', torch.sum(gcls_attention_mask[i][j][0]))
+#                 x = (gcls_attention_mask[i][j][0] == 1).nonzero(as_tuple=True)[0]
+# #                 print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'])[x-1]))
+# #                 print('-'*77)
+#                 self.R_tokens[j] += torch.sum(gcls_attention_mask[i][j][0])
+#                 self.R_trans[j] += len(cumul_DG_words[i][j])
+                
+# #             for j in range(5+1):
+# #                 for k in range(path_types):
+# #                     R_tokens[j,k] += torch.sum(gcls_attention_mask[i][j][k])
+                    
+#         for i in range(12):
+#             print('-'*77)
+#             print('Range: ', i)
+#             print(f'portion of tokens in range {i} / path type {j}: ', self.R_tokens[i] / total_toks)
+#             print(f'portion of words in range {i} / path type {j}: ', self.R_trans[i] / total_trans)
+            
+                
+        return gcls_attention_mask, gcls_attention_mask_surface_distance_word_level, gcls_attention_mask_surface_distance_token_level, VDC_info, DEP_info, POS_info, hVDC_word, hVDC_token
 
-#         cdw_vec[0] = 1
-
-        return cdw_vec
-
-    def get_data_loader(self, examples, type='train_data', gcls_attention_mask=None, path_types = None, 
-                        cumul_DG_words= None, total_tokens=None):
+            
+    def get_data_loader(self, examples, type='train_data', gcls_attention_mask=None, hVDC=None):
         features = self.convert_examples_to_features(
             examples, self.label_list, self.opt.max_seq_length, self.tokenizer)
         
@@ -443,91 +617,6 @@ class ReadData:
         # No change. Quite obviously, the labels are the same.
         ##############################
         
-        
-                
-        all_input_t_ids_org = torch.tensor([f.input_t_ids for f in features], dtype=torch.long)
-        ##############################
-        all_input_t_ids = DGEDT_batches['aspect_indices']
-        ##############################
-        
-        
-        
-        all_input_t_mask_org = torch.tensor([f.input_t_mask for f in features], dtype=torch.long)
-        ##############################
-        all_input_t_mask = torch.tensor(all_input_t_ids>0, dtype = torch.long)
-        # Not used anyway
-        ##############################
-
-        
-        
-        all_segment_t_ids_org = torch.tensor([f.segment_t_ids for f in features], dtype=torch.long)
-        ##############################
-        all_segment_t_ids = torch.zeros(all_input_t_ids.size(), dtype = torch.long)
-        # No change. Zeros with size 128. Also not used anyway.
-        ##############################
-
-        
-        
-        all_input_without_t_ids_org = torch.tensor([f.input_without_t_ids for f in features], dtype=torch.long)
-        ##############################
-        # not used in TD-BERT.
-        all_input_without_t_ids = torch.zeros(all_input_without_t_ids_org.size(), dtype = torch.long)
-        ##############################
-        
-        
-        
-        all_input_without_t_mask_org = torch.tensor([f.input_without_t_mask for f in features], dtype=torch.long)
-        ##############################
-        # not used in TD-BERT.
-        all_input_without_t_mask = torch.zeros(all_input_without_t_mask_org.size(), dtype = torch.long)
-        ##############################
-        
-        
-        
-        all_segment_without_t_ids_org = torch.tensor([f.segment_without_t_ids for f in features], dtype=torch.long)
-        ##############################
-        # not used in TD-BERT.
-        all_segment_without_t_ids = torch.zeros(all_segment_without_t_ids_org.size(), dtype = torch.long)
-        ##############################
-        
-        
-        
-        all_input_left_t_ids = torch.tensor([f.input_left_t_ids for f in features], dtype=torch.long)
-        all_input_left_t_mask = torch.tensor([f.input_left_t_mask for f in features], dtype=torch.long)
-        all_segment_left_t_ids = torch.tensor([f.segment_left_t_ids for f in features], dtype=torch.long)
-        all_input_right_t_ids = torch.tensor([f.input_right_t_ids for f in features], dtype=torch.long)
-        all_input_right_t_mask = torch.tensor([f.input_right_t_mask for f in features], dtype=torch.long)
-        all_segment_right_t_ids = torch.tensor([f.segment_right_t_ids for f in features], dtype=torch.long)
-        ##############################
-        # Above six are all not used in TD-BERT.
-        ##############################
-
-        input_left_ids_org = torch.tensor([f.input_left_ids for f in features], dtype=torch.long)
-        ##############################
-        input_left_ids = torch.zeros(input_left_ids_org.size(), dtype = torch.long)
-        for i in range(batch_size_):
-            aspect_start_idx = DGEDT_batches['tran_indices'][i][DGEDT_batches['span_indices'][i][0][0]][0] + 1
-            input_left_ids[i][:aspect_start_idx] = DGEDT_batches['text_indices'][i][:aspect_start_idx]
-            input_left_ids[i][aspect_start_idx] = 2    # [SEP]
-            
-        ##############################
-        
-        
-        
-        input_left_mask_org = torch.tensor([f.input_left_mask for f in features], dtype=torch.long)
-        ##############################
-        input_left_mask = torch.tensor(input_left_ids>0, dtype = torch.long)
-        # 어차피 안 쓰임.
-        ##############################
-        
-        
-        
-        segment_left_ids_org = torch.tensor([f.segment_left_ids for f in features], dtype=torch.long)
-        ##############################
-        segment_left_ids = torch.zeros(input_left_ids.size(), dtype = torch.long)
-        # 어차피 안 쓰임.
-        ##############################
-        
         all_tran_indices = DGEDT_batches['tran_indices']
         all_span_indices = DGEDT_batches['span_indices']
         all_input_guids = torch.tensor([i for i in range(batch_size_)], dtype = torch.long)
@@ -543,15 +632,6 @@ class ReadData:
 
         extended_attention_mask = extended_attention_mask.unsqueeze(1).repeat(1,12,1,1,1)
         print('extended_attention_mask.size() should be [N,12,1,128,128] ', extended_attention_mask.size())
-        
-        if self.opt.automation_type in ['no_params', 'query', 'query_step_guide', 'SA']:
-            extended_attention_mask_extended = extended_attention_mask[:,:,:,:(self.opt.auto_k + 1),:].clone()
-            
-
-        # VDC_info: for VDC-automation
-        VDC_info = torch.full([all_input_ids.size(0), 128], 99) 
-        VDC_info[:,:2] = 0
-        sgg_info = torch.full([all_input_ids.size(0)], 0)
         
         g_config = []
         if self.opt.g_config == None:
@@ -570,169 +650,70 @@ class ReadData:
                     g_config.append(torch.tensor([[self.opt.g_config[4], self.opt.g_config[5]],
                                                   [self.opt.g_config[6], self.opt.g_config[7]]], dtype = torch.float))
         
-        new_VDC_K = []
+        new_VDC_k = [[]]*all_input_ids.size(0)
+        current_VDC = torch.zeros([all_input_ids.size(0), 12], dtype= torch.float)
         print('='*77)
         print('VDC threshold: ', self.opt.VDC_threshold)
         if self.opt.constant_vdc != None:
             print('self.opt.constant_vdc: ', self.opt.constant_vdc)
-        for i in range(all_input_ids.size(0)):
-            for item in reversed(range(self.opt.auto_VDC_k+1)):
-                VDC_info[i][gcls_attention_mask[i][item][0] == 1] = item+1
-                
-                #### first token pooling 용
-#                 x = (gcls_attention_mask[i][item][0] == 1).nonzero(as_tuple=True)[0]
-#                 VDC_info[i][x[0]] = item+1
-                
-#             y = (VDC_info[i] == 1).nonzero(as_tuple=True)[0]
-#             assert len(y) == 1
-                ####
-                
-            x = (all_input_ids[i] == 50249).nonzero(as_tuple=True)[0]
-#             sgg_info[i] = x[0]
-                
-            VDC_info = VDC_info.long()
-            sgg_info = sgg_info.long()
             
-            if i % 300 == 0 and type == 'train_data':
-                print('='*77)
-#                 print('sgg_info[i]: ', sgg_info[i])
-#                 print('tokens according to sgg_info: ', tokenizer.convert_ids_to_tokens(all_input_ids[i][sgg_info[i]:sgg_info[i]+1]))
-                
-#             if i % 300 == 0 and type=='train_data':
-#                 print('='*77)
-#                 print('all_input_guids[i]: ', all_input_guids[i])
-#                 x = (all_input_ids[i] == 1).nonzero(as_tuple=True)[0]
-#                 print('all_input_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_ids[i][:x[0]]))
-#                 print('-'*77)
-#                 x = (all_input_t_ids[i] == 1).nonzero(as_tuple=True)[0]
-#                 print(x)
-#                 print('all_input_t_ids[i]: ', tokenizer.convert_ids_to_tokens(all_input_t_ids[i][:x[0]]))
-#                 print('VDC_info[i]: ', VDC_info[i])
-#                 x = (VDC_info[i] == 1).nonzero(as_tuple=True)
-#                 print('target tokens according to VDC_info: ', 
-#                       tokenizer.convert_ids_to_tokens(all_input_ids[i][x[0]])) 
-#                 print('-'*77)
-                
-#                 raw file을 불러오고 i 번째 가지고 와서 spacy 가하면 될 듯?
-#                 여기에 실제 데이터 raw 보여주고, aspect 보여주고 spacy 했을 때 그림 결과 보여주게끔 코드를 보여주기.
-                
-            
-            #### VDC as a function of the input data.
-            for ii in range(self.max_VDC+1):
-                if len(cumul_DG_words[i][ii])/total_tokens[i] > self.opt.VDC_threshold:
-                    new_VDC_K.append(ii)
-                    break
-                if ii == self.max_VDC:
-                    new_VDC_K.append(ii)
-                   
-            if new_VDC_K[i] == 0:
-                new_VDC_k = [0] * 12
-            elif new_VDC_K[i] == 1:
-                new_VDC_k = [0,0,0,0,0,0,1,1,1,1,1,1]
-            elif new_VDC_K[i] == 2:
-                new_VDC_k = [0,0,0,0,1,1,1,1,2,2,2,2]
-            elif new_VDC_K[i] == 3:
-                new_VDC_k = [0,0,0,1,1,1,2,2,2,3,3,3]
-            elif new_VDC_K[i] == 4:
-                new_VDC_k = [0,0,0,1,1,1,2,2,3,3,4,4]
-            elif new_VDC_K[i] == 5:
-                new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,5]
-            elif new_VDC_K[i] == 6:
-                new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,6]
-            elif new_VDC_K[i] == 7:
-                new_VDC_k = [0,0,1,1,2,2,3,3,4,5,6,7]
-            elif new_VDC_K[i] == 8:
-                new_VDC_k = [0,0,1,1,2,2,3,4,5,6,7,8]
-            elif new_VDC_K[i] == 9:
-                new_VDC_k = [0,0,1,1,2,3,4,5,6,7,8,9]
-            elif new_VDC_K[i] == 10:
-                new_VDC_k = [0,0,1,2,3,4,5,6,7,8,9,10]
-            elif new_VDC_K[i] == 11:
-                new_VDC_k = [0,1,2,3,4,5,6,7,8,9,10,11]
-                
-            if self.opt.constant_vdc != None:
-                new_VDC_k = self.opt.constant_vdc # ssss
-                
-            if 'g_centroid' in self.opt.automation_type:
-                assert new_VDC_k == [0,1,2,3,4,5,6,7,8,9,10,11]
-                
-            # decreasing VDC
-#             new_VDC_k = [new_VDC_k[11-i] for i in range(12)]
-            
-    
-            for j, item in enumerate(new_VDC_k):
-                if self.opt.graph_type == 'dg':
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
+        if self.opt.VDC_threshold != None and self.opt.use_hVDC == True:
+            for i in range(all_input_ids.size(0)):
+                if hVDC[i] == 0: 
+                    new_VDC_k = [0] * 12
+                elif hVDC[i] == 1:
+                    new_VDC_k = [0,0,0,0,0,0,1,1,1,1,1,1]
+                elif hVDC[i] == 2:
+                    new_VDC_k = [0,0,0,0,1,1,1,1,2,2,2,2]
+                elif hVDC[i] == 3:
+                    new_VDC_k = [0,0,0,1,1,1,2,2,2,3,3,3]
+                elif hVDC[i] == 4:
+                    new_VDC_k = [0,0,0,1,1,1,2,2,3,3,4,4]
+                elif hVDC[i] == 5:
+                    new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,5]
+                elif hVDC[i] == 6:
+                    new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,6]
+                elif hVDC[i] == 7:
+                    new_VDC_k = [0,0,1,1,2,2,3,3,4,5,6,7]
+                elif hVDC[i] == 8:
+                    new_VDC_k = [0,0,1,1,2,2,3,4,5,6,7,8]
+                elif hVDC[i] == 9:
+                    new_VDC_k = [0,0,1,1,2,3,4,5,6,7,8,9]
+                elif hVDC[i] == 10:
+                    new_VDC_k = [0,0,1,2,3,4,5,6,7,8,9,10]
+                elif hVDC[i] == 11:
+                    new_VDC_k = [0,1,2,3,4,5,6,7,8,9,10,11]
                     
-                elif self.opt.graph_type == 'sd':
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item][0]) * -10000.0
+                current_VDC[i][:] = torch.tensor(new_VDC_k[i], dtype = torch.float)
+                for j, item in enumerate(new_VDC_k):
+                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
                 
-                if self.opt.automation_type in ['s_only_att', 's_only_ec']:
-                    extended_attention_mask[i, j, :, 1, 0] = (1-g_config[0]) * -10000.0
-                else:
-                    extended_attention_mask[i, j, :, 0, 0] = (1-g_config[0]) * -10000.0
-                    extended_attention_mask[i, j, :, 0, 1] = (1-g_config[1]) * -10000.0
-                    extended_attention_mask[i, j, :, 1, 0] = (1-g_config[2]) * -10000.0
-                    extended_attention_mask[i, j, :, 1, 1] = (1-g_config[3]) * -10000.0
-                
-                if self.opt.automation_type in ['no_params', 'query', 'SA']:
-                    for k in range(self.opt.auto_k + 1):
-                        extended_attention_mask_extended[i,j,0,k,:] = (1 - gcls_attention_mask[i][k]) * -10000.0
-                        extended_attention_mask_extended[i, j, :, k, 0] = 0.0
-                        extended_attention_mask_extended[i, j, :, k, 1] = 0.0
+        elif self.opt.use_hVDC == False:
+            for i in range(all_input_ids.size(0)):
+                current_VDC[i] = torch.tensor(self.opt.constant_vdc)
+                for j, item in enumerate(self.opt.constant_vdc):
+                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
                         
-                elif self.opt.automation_type in ['query_step_guide??']:
-                    if item != 11:
-                        item_ = item+1
-                    else:
-                        item = 11
-                    extended_attention_mask_extended[i,j,0,0,:] = (1 - gcls_attention_mask[i][item_]) * -10000.0
-                    extended_attention_mask_extended[i, j, :, 0, 0] = 0.0
-                    extended_attention_mask_extended[i, j, :, 0, 1] = 0.0
-                    
-                    if item == 0:
-                        item_ = 0
-                    else:
-                        item_ = item-1
-                    extended_attention_mask_extended[i,j,0,1,:] = (1 - gcls_attention_mask[i][item_]) * -10000.0
-                    extended_attention_mask_extended[i, j, :, 1, 0] = 0.0
-                    extended_attention_mask_extended[i, j, :, 1, 1] = 0.0
-                        
-                    
-        if self.opt.automation_type in ['no_params', 'query', 'query_step_guide', 'SA']:
-            extended_attention_mask = torch.cat((extended_attention_mask, extended_attention_mask_extended), dim = 3)
-            print('extended_attention_mask.size(): ', extended_attention_mask.size())
-#             assert (extended_attention_mask[:,:,0,1,:] == extended_attention_mask[:,:,0,-2,:]).all()
-                    
-        
         print('new_VDC_K statistics: ')
-        max_k = max(new_VDC_K)
+        max_k = max(hVDC)
         for jj in range(max_k+1):
-            print(f'VDC={jj}: {100*float(sum(torch.tensor(new_VDC_K) == jj)/len(new_VDC_K))}%')  
+            print(f'VDC={jj}: {100*float(sum(torch.tensor(hVDC) == jj)/len(hVDC))}%')  
         
         
-        
-        ###############################
-
-#         data = TensorDataset(all_input_ids, all_graph_s_pos, all_input_ids_lcf_global, all_input_ids_lcf_local, all_input_mask, 
-#                              all_input_mask_lcf_global, all_input_mask_lcf_local, all_segment_ids, 
-#                              all_segment_ids_lcf_global, all_segment_ids_lcf_local, all_label_ids, all_input_t_ids,
-#                              all_input_t_mask, all_segment_t_ids, all_input_without_t_ids, 
-#                              all_input_without_t_mask, all_segment_without_t_ids, all_input_left_t_ids, all_input_left_t_mask,
-#                              all_segment_left_t_ids,all_input_right_t_ids, all_input_right_t_mask, all_segment_right_t_ids,
-#                              input_left_ids, input_left_mask, segment_left_ids, all_input_dg, all_input_dg1, 
-#                              all_input_dg2, all_input_dg3, all_input_guids, gcls_attention_mask)
-
-        data = TensorDataset(all_input_ids, all_label_ids, all_input_guids)
+        ###############
+        if 'bert_' in self.opt.model_name:
+            data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_input_guids)
+        elif 'roberta' in self.opt.model_name:
+            data = TensorDataset(all_input_ids, all_label_ids, all_input_guids)
         
         if type == 'train_data':
             train_data = data
             train_sampler = RandomSampler(data)
-            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info, sgg_info
+            return train_data, DataLoader(train_data, sampler=train_sampler, batch_size=self.opt.train_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, current_VDC
         else:
             eval_data = data
             eval_sampler = SequentialSampler(eval_data)
-            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, VDC_info, sgg_info
+            return eval_data, DataLoader(eval_data, sampler=eval_sampler, batch_size=self.opt.eval_batch_size), all_tran_indices, all_span_indices, extended_attention_mask, current_VDC
 
     def convert_examples_to_features(self, examples, label_list, max_seq_length, tokenizer):
         """Loads a data file into a list of `InputBatch`s."""
@@ -928,17 +909,7 @@ class ReadData:
             assert len(segment_ids) == max_seq_length
 
             label_id = label_map[example.label]
-            # if ex_index < 5:
-            #     logger.info("*** Example ***")
-            #     logger.info("guid: %s" % (example.guid))
-            #     logger.info("tokens: %s" % " ".join(
-            #         [tokenization.printable_text(x) for x in tokens]))
-            #     logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-            #     logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
-            #     logger.info(
-            #         "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
-            #     logger.info("label: %s (id = %d)" % (example.label, label_id))
-
+            
             if tokens_aspect == None:
                 features.append(
                     InputFeatures(
@@ -991,7 +962,7 @@ class ReadData:
             else:
                 tokens_b.pop()
 
-
+                
 class DataProcessor(object):
     """Base class for data converters for sequence classification data sets."""
 
