@@ -16,20 +16,20 @@ from tqdm import tqdm, trange
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+from torch.optim import AdamW
 from tensorboardX import SummaryWriter
-from modeling import BertConfig, BertForSequenceClassification, BertForSequenceClassification_gcls, BertForSequenceClassification_gcls_MoE
 from optimization import BERTAdam
 
-from configs import get_config
+from configs import get_config_2
 from models import CNN, CLSTM, PF_CNN, TCN, Bert_PF, BBFC, TC_CNN, RAM, IAN, ATAE_LSTM, AOA, MemNet, Cabasc, TNet_LF, MGAN, BERT_IAN, TC_SWEM, MLP, AEN_BERT, TD_BERT, TD_BERT_QA, DTD_BERT, TD_BERT_with_GCN, BERT_FC_GCN
 from utils.data_util_roberta import ReadData, RestaurantProcessor, LaptopProcessor, TweetProcessor, MamsProcessor
-from utils.save_and_load import load_model_MoE, load_model_roberta_VDC_auto
+from utils.save_and_load import load_model_roberta_VDC_auto
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
 import time
-from data_utils import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_TD_t_star, RobertaForSequenceClassification_gcls_auto, RobertaForSequenceClassification_gcls_VDC_auto, RobertaForSequenceClassification_gcls_m1, RobertaForSequenceClassification_gcls_FFN
+from data_utils_roberta import *
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD
 
 from torch.distributions.bernoulli import Bernoulli
 
@@ -115,11 +115,14 @@ class Instructor:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
             self.train_VDC_info = self.dataset.train_VDC_info.to(args.device)
+            self.train_DEP_info = self.dataset.train_DEP_info.to(args.device)
             self.eval_VDC_info = self.dataset.eval_VDC_info.to(args.device)
+            self.eval_DEP_info = self.dataset.eval_DEP_info.to(args.device)
             
             if task_name == 'mams':
                 self.validation_extended_attention_mask = self.dataset.validation_extended_attention_mask.to(args.device)
                 self.validation_VDC_info = self.dataset.validation_VDC_info.to(args.device)
+                self.validation_DEP_info = self.dataset.validation_DEP_info.to(args.device)
             
                 
         if args.model_name in ['roberta_lcf', 'roberta_lcf_td']:
@@ -133,40 +136,14 @@ class Instructor:
         
         os.makedirs(args.model_save_path, exist_ok=True)
         
-        if args.model_class == BertForSequenceClassification:
-            self.model = BertForSequenceClassification(bert_config, len(self.dataset.label_list))
-        elif args.model_class == RobertaForSequenceClassification:
+        if args.model_class == RobertaForSequenceClassification:
 #             self.model = RobertaForSequenceClassification(roberta_config)
             self.model = RobertaForSequenceClassification.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_TD:
             self.model = RobertaForSequenceClassification_TD.from_pretrained('roberta-base')
-        elif args.model_class == RobertaForSequenceClassification_TD_t_star:
-            self.model = RobertaForSequenceClassification_TD_t_star.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_gcls:
-            self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base', g_pooler = args.g_pooler)
-        elif args.model_class == RobertaForSequenceClassification_gcls_FFN:
-            self.model = RobertaForSequenceClassification_gcls_FFN.from_pretrained('roberta-base', g_pooler = args.g_pooler,
-                                                                                   forward_type = args.forward_type)
-        elif args.model_class == RobertaForSequenceClassification_gcls_VDC_auto:
-            print('args.automation_type: ', args.automation_type)
-            self.model = RobertaForSequenceClassification_gcls_VDC_auto.from_pretrained('roberta-base',g_pooler = args.g_pooler,
-                                                                                        automation_type = args.automation_type,
-                                                                                        auto_k = args.auto_k)
-            
-        elif args.model_class == RobertaForSequenceClassification_gcls_m1:
-            print('args.automation_type: ', args.automation_type)
-            self.model = RobertaForSequenceClassification_gcls_m1.from_pretrained('roberta-base',g_pooler = args.g_pooler,
-                                                                                        automation_type = args.automation_type,
-                                                                                        auto_k = args.auto_k, 
-                                                                                        embed_dense = args.embed_dense,
-                                                                                        step_threshold = args.step_threshold)
-            
-        elif args.model_class == RobertaForSequenceClassification_gcls_auto:
-            self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base', VDC_auto = args.VDC_auto, VIC_auto = args.VIC_auto, num_auto_layers = args.num_auto_layers, head_wise = args.head_wise, auto_VDC_k = args.auto_VDC_k, 
-                                                                                    a_pooler = args.a_pooler, 
-                                                                                    g_pooler = args.g_pooler)
-        elif args.model_class == BertForSequenceClassification_gcls:
-            self.model = BertForSequenceClassification_gcls(bert_config, len(self.dataset.label_list))
+            self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base', g_pooler = args.g_pooler,
+                                                                               pb = args.pb)
         else:
             self.model = model_classes[args.model_name](bert_config, args)
         
@@ -308,7 +285,24 @@ class Instructor:
     ###############################################################################################
     
     def do_train(self):
-                
+        print('='*77)
+        print('torch.sum(self.model.roberta.encoder.DEP.weight.data): ', torch.sum(self.model.roberta.encoder.DEP.weight.data))
+        print('='*77)
+        print('torch.sum(self.model.roberta.pooler.dense_ec.weight.data): ',
+              torch.sum(self.model.roberta.pooler.dense_ec.weight.data))
+        print('='*77)
+        print('torch.sum(self.model.roberta.pooler.dense_concat.weight.data): ',
+              torch.sum(self.model.roberta.pooler.dense_concat.weight.data))
+        print('='*77)
+        print()
+        
+        print("shouldn't change")
+        print('='*77)
+        print('torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data): ', torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data))
+        print('torch.sum(self.model.roberta.pooler.dense.weight.data): ',
+              torch.sum(self.model.roberta.pooler.dense.weight.data))
+        print('='*77)
+        
         print('# of train_examples: ', len(self.dataset.train_examples))
         print('# of eval_examples: ', len(self.dataset.eval_examples))
         if task_name == 'mams':
@@ -324,7 +318,7 @@ class Instructor:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
-                elif task_name == 'restaurant' and self.max_test_acc_INC < 0.82:
+                elif task_name == 'restaurant' and self.max_test_acc_INC < 0.86:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
@@ -369,12 +363,15 @@ class Instructor:
                 elif self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
                                              'roberta_gcls_vdc_auto']:
                     input_ids = input_ids.to(self.opt.device)
-                    train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
+#                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
+                    train_extended_attention_mask = self.train_extended_attention_mask[all_input_guids].transpose(0,1)
                     train_VDC_info = self.train_VDC_info[all_input_guids]
+                    train_DEP_info = self.train_DEP_info[all_input_guids]
                 elif self.opt.model_name in ['roberta_gcls_m1']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = self.train_extended_attention_mask[all_input_guids].transpose(0,1)
                     train_VDC_info = self.train_VDC_info[all_input_guids]
+                    train_DEP_info = self.train_DEP_info[all_input_guids]
                 
                 elif self.opt.model_name in ['roberta']:
                     input_ids = input_ids.to(self.opt.device)
@@ -385,28 +382,118 @@ class Instructor:
                     
                 label_ids = label_ids.to(self.opt.device)
                                         
-                if self.opt.model_name in ['roberta_lcf', 'roberta_lcf_td']:
-                    train_lcf_matrix = torch.tensor([self.train_lcf_vec_list[item] for item in all_input_guids], 
-                                                    dtype = torch.float)
-                    train_lcf_matrix = train_lcf_matrix.to(self.opt.device)
                 
-                if self.global_step % 100 == 0:
-                    if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
-                                               'roberta_gcls_vdc_auto', 'roberta_gcls_m1']:
+                if self.global_step % 50 == 0:
+                    detail = True
+                    if self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_m1']:
+                        
+                        print('VDC_info[0]: ', train_VDC_info[0])
+                        print('DEP_info[0]: ', train_DEP_info[0])
+                        print()
+                        print('='*77)
+                        print('Code examination from run.py and using Parser on the fly')
+                        print()
+                        print('* 1. text')
+                        print('-'*77)
+                        words = self.dataset.DGEDT_train_data[all_input_guids[0]]['text']
+                        text = ' '.join(self.dataset.DGEDT_train_data[all_input_guids[0]]['text'])
+                        document = self.dataset.nlp(text)
+                        print(text)
+                        
+                        span_indices = self.train_span_indices[all_input_guids[0]]
+                        tran_indices = self.train_tran_indices[all_input_guids[0]]
+                        
+                        document_words = [token for token in document]
+                        target_i = list(range(span_indices[0][0], span_indices[0][1]))
+                        VDC = {} # token.i 기준으로 저장할 것.
+                        last_used = [] # Just for assertion.
+
+                        VDC[0] = target_i.copy()
+                        used = target_i.copy()
+                        last_used = target_i.copy()
+
+                        for l in range(1, 12):
+                            VDC[l] = VDC[l-1].copy()
+                            last_used_ = []
+                            for token in document:
+                                # Skip the already used ones.
+                                if token.i in used:
+                                    continue
+
+                                # 현재 VDC token들과 연결되는 방법은 2가지. head로 연결되는 경우와 tail로 연결되는 경우.
+                                # 1. Head로 연결되는 경우.
+                                for child in token.children:
+                                    if child.i in used:
+                                        assert child.i in last_used
+                                        VDC[l].append(token.i)
+                                        last_used_.append(token.i)
+
+                                # 2. Tail로 연결되는 경우.
+                                if token.head.i in used:
+                                    assert token.head.i in last_used
+                                    VDC[l].append(token.i)
+                                    last_used_.append(token.i)
+
+                            used += VDC[l]
+                            last_used = last_used_
+                            VDC[l] = sorted(VDC[l])
+
+                        # VDC로 이제 attended token 만들고 tokenzier로 최종하면 딱 맞을 듯?
+                        VDC_l_tokens = []
+                        for i in range(len(VDC)):
+                            VDC_words = [token.text for token in document_words if token.i in VDC[i]]
+                            VDC_tokens = []
+                            for word in VDC_words:
+                                VDC_tokens += tokenizer.tokenize(word)
+
+                            VDC_l_tokens.append(VDC_tokens)
+
+                        
                         print('-'*77)
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
                         print('guid: ', all_input_guids[0])
-                        x = (train_VDC_info[0] == 1).nonzero(as_tuple=True)[0]
+                        x = (train_VDC_info[0] == 0).nonzero(as_tuple=True)[0]
                         print('train_VDC_info[0] target: ', tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
-                        print('train_extended_attention_mask layer 0')
-                        x = (train_extended_attention_mask[0][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        curr_vdc = self.dataset.train_current_VDC[all_input_guids[0]]
+                        
+                        zz = (train_VDC_info[0] == 999).nonzero(as_tuple=True)[0]
+                        
+                        print(f'train_extended_attention_mask layer 0, vdc={int(curr_vdc[0])}')
+                        x = (train_extended_attention_mask[0][0][0][zz[0]] == 0).nonzero(as_tuple=True)[0]
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                        print('train_extended_attention_mask layer 11')
-                        x = (train_extended_attention_mask[11][0][0][1] == 0).nonzero(as_tuple=True)[0]
+                        print(VDC_l_tokens[int(curr_vdc[0])])
+                        print('-'*77)
+                        print(f'train_extended_attention_mask layer 4, vdc={int(curr_vdc[4])}')
+                        x = (train_extended_attention_mask[4][0][0][zz[0]] == 0).nonzero(as_tuple=True)[0]
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-#                         print('sgg position')
-#                         print(tokenizer.convert_ids_to_tokens(input_ids[0][train_sgg_info[0]:train_sgg_info[0]+1]))
+                        print(VDC_l_tokens[int(curr_vdc[4])])
+                        print('-'*77)
+                        print(f'train_extended_attention_mask layer 8, vdc={int(curr_vdc[8])}')
+                        x = (train_extended_attention_mask[8][0][0][zz[0]] == 0).nonzero(as_tuple=True)[0]
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
+                        print(VDC_l_tokens[int(curr_vdc[8])])
+                        
+                        
+                        for i, token in enumerate(document):
+                            if i == 20:
+                                break
+                            if 'g_infront' in args.input_format:
+                                if i >= span_indices[0][0]:
+                                    A = 2
+                                else:
+                                    A = 1
+                            elif 'g' in args.input_format:
+                                A = 2
+                            elif 'TD' in args.input_format:
+                                A = 1
+                            if i >= span_indices[0][0] and 'g_infront' in args.input_format:
+                                A = 2
+
+                            for xx in range(tran_indices[i][0], tran_indices[i][1]):
+                                print(f'{i}-th token: {token.text} ({self.dataset.dep2idx[int(train_DEP_info[0][xx+A])]})')
+                        
+                        
                         
                     elif self.opt.model_name in ['roberta']:
                         print('-'*77)
@@ -414,63 +501,21 @@ class Instructor:
                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
                         print('label_ids[0]: ', label_ids[0])
                         
-                if self.opt.model_class in [BertForSequenceClassification, CNN]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
+                else:
+                    detail = False
                     
-                elif self.opt.model_class in [RobertaForSequenceClassification]:
+                if self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
                     loss, logits = self.model(input_ids, labels = label_ids, VDC_info = train_VDC_info)[:2]
                     
-                elif self.opt.model_class in [RobertaForSequenceClassification_TD_t_star]:
-                    loss, logits = self.model(input_ids, labels = label_ids, VDC_info = train_VDC_info)[:2]
-                    
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     sg_loss, output_ = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask, 
-                                              VDC_info = train_VDC_info)[:2]
-                    loss, logits = output_[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_FFN]:
-                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask, 
-                                              VDC_info = train_VDC_info, forward_type = args.forward_type)[:2]
-                    loss, logits = output_[:2]
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_VDC_auto]:
-                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = train_extended_attention_mask, 
-                                              VDC_info = train_VDC_info)[:2]
-                    
-                    loss, logits = output_[:2]
-#                     loss = loss + max(0, 0.2 - sum(sg_loss)/len(sg_loss))
-
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_m1]:
-                    if args.automation_type in ['g_centroid_v0_kd']: 
-                        sg_loss, output_, affinity_kd, h_affinity_kd = self.model(input_ids, labels = label_ids,
                                                   extended_attention_mask = train_extended_attention_mask, 
-                                                  VDC_info = train_VDC_info)[:4]
-
-                        loss, logits = output_[:2]
-                        kd_loss = F.mse_loss(affinity_kd, h_affinity_kd)
-                        loss += kd_loss
-                        if self.global_step % 50 == 0:
-                            print()
-                            print('kd_loss: ', kd_loss)
-                            print('affinity_kd[0][0][:50]: ', affinity_kd[0][0][:50])
-                            print('h_affinity_kd[0][0][:50]: ', h_affinity_kd[0][0][:50])
-                        
-                    else:
-                        sg_loss, output_, auto_att_scores = self.model(input_ids, labels = label_ids,
-                                                  extended_attention_mask = train_extended_attention_mask, 
-                                                  VDC_info = train_VDC_info)[:3]
-
-                        loss, logits = output_[:2]
-                    
-                        
-                   
-                elif self.opt.model_class in [BertForSequenceClassification_gcls]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, gcls_attention_mask)
+                                                  VDC_info = train_VDC_info, DEP_info = train_DEP_info,
+                                                  use_DEP = args.use_DEP, detail = detail)[:2]
+                    loss, logits = output_[:2]
                     
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
@@ -555,7 +600,7 @@ class Instructor:
                     self.model.zero_grad()
                     self.global_step += 1
                     
-                if self.global_step % self.opt.log_step == 0 and i_epoch > 4:
+                if self.global_step % self.opt.log_step == 0 and i_epoch > -1:
                     print('lr: ', self.optimizer.param_groups[0]['lr'])
                     print('lr2: ', self.optimizer.param_groups[1]['lr'])
                     
@@ -612,6 +657,7 @@ class Instructor:
                         
                         
     def do_eval(self, data_type = None):  
+        ss = False
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
@@ -635,18 +681,22 @@ class Instructor:
                 if data_type == 'validation':
                     extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
                     eval_VDC_info = self.validation_VDC_info[all_input_guids]
+                    eval_DEP_info = self.validation_DEP_info[all_input_guids]
                 else:
                     extended_att_mask = list(self.eval_extended_attention_mask[all_input_guids].transpose(0,1))
                     eval_VDC_info = self.eval_VDC_info[all_input_guids]
+                    eval_DEP_info = self.eval_DEP_info[all_input_guids]
                     
             elif self.opt.model_name in ['roberta_gcls_m1']:
                 input_ids = input_ids.to(self.opt.device)
                 if data_type == 'validation':
                     extended_att_mask = self.validation_extended_attention_mask[all_input_guids].transpose(0,1)
                     eval_VDC_info = self.validation_VDC_info[all_input_guids]
+                    eval_DEP_info = self.validation_DEP_info[all_input_guids]
                 else:
                     extended_att_mask = self.eval_extended_attention_mask[all_input_guids].transpose(0,1)
                     eval_VDC_info = self.eval_VDC_info[all_input_guids]
+                    eval_DEP_info = self.eval_DEP_info[all_input_guids]
                     
             elif self.opt.model_name in ['roberta']:
                 input_ids = input_ids.to(self.opt.device)
@@ -662,47 +712,19 @@ class Instructor:
             span_indices = []
                     
             with torch.no_grad():
-                if self.opt.model_class in [BertForSequenceClassification, CNN]:
-                    loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification]:
+                if self.opt.model_class in [RobertaForSequenceClassification]:
                     loss, logits = self.model(input_ids, labels = label_ids)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_TD]:
                     loss, logits = self.model(input_ids, labels = label_ids, VDC_info = eval_VDC_info )[:2]
                     
-                elif self.opt.model_class in [RobertaForSequenceClassification_TD_t_star]:
-                    loss, logits = self.model(input_ids, labels = label_ids, VDC_info = eval_VDC_info )[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
                     sg_loss, output_ = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = extended_att_mask,
-                                              VDC_info = eval_VDC_info)[:2]
+                                              VDC_info = eval_VDC_info, DEP_info = eval_DEP_info, use_DEP = args.use_DEP)[:2]
                     loss, logits = output_[:2]
                 
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_FFN]:
-                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask,
-                                              VDC_info = eval_VDC_info, forward_type = args.forward_type)[:2]
-                    loss, logits = output_[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_VDC_auto]:
-                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask,
-                                              VDC_info = eval_VDC_info)[:2]
-                    
-                    loss, logits = output_[:2]
-                    
-                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_m1]:
-                    sg_loss, output_, eval_auto_att_scores = self.model(input_ids, labels = label_ids,
-                                              extended_attention_mask = extended_att_mask,
-                                              VDC_info = eval_VDC_info)[:3]
-                    
-                    loss, logits = output_[:2]
-                    if eval_vdc == None:
-                        eval_vdc = eval_auto_att_scores
-                    else:
-                        eval_vdc = torch.cat((eval_vdc, eval_auto_att_scores), dim =0)
                                 
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
@@ -747,15 +769,6 @@ class Instructor:
                         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids, input_t_ids,
                                                   input_t_mask, segment_t_ids)
 
-            # with torch.no_grad():  
-            #     if self.opt.model_class in [BertForSequenceClassification, CNN]:
-            #         loss, logits = self.model(input_ids, segment_ids, input_mask, label_ids)
-            #     else:
-            #         loss, logits = self.model(input_ids, segment_ids, input_mask, labels=label_ids,
-            #                                   input_t_ids=input_t_ids,
-            #                                   input_t_mask=input_t_mask, segment_t_ids=segment_t_ids)
-                    # confidence.extend(torch.nn.Softmax(dim=1)(logits)[:, 1].tolist())  # 获取 positive 类的置信度
-            # loss = F.cross_entropy(logits, label_ids, size_average=False)  # 计算mini-batch的loss总和
             if self.opt.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu.
             if args.fp16 and args.loss_scale != 1.0:
@@ -773,7 +786,14 @@ class Instructor:
             y_pred.extend(np.argmax(logits, axis=1))
             
             y_true.extend(label_ids)
-
+            
+            
+            predictions = np.argmax(logits, axis=1)
+            correct_guids = all_input_guids[predictions == label_ids]
+#             if 420 in correct_guids:
+#                 ss = True
+                
+            
             # eval_loss += tmp_eval_loss.mean().item()
             eval_loss += loss.item()
                     
@@ -809,6 +829,11 @@ class Instructor:
                     print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
                     print('='*77)
         else:
+#             if ss and eval_accuracy > 0.84:
+#                 print('Got 420 correct!')
+#                 torch.save(self.model.state_dict(), self.opt.model_save_path+f'/best_acc_{eval_accuracy}.pkl') 
+#                 torch.save(eval_vdc, f'./analysis/{self.global_step}_eval_vdc.pt')
+                    
             validation_increased = False
             if eval_accuracy > self.max_test_acc_INC:
                 validation_increased = True
@@ -827,20 +852,12 @@ class Instructor:
                     print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
                     print('='*77)
 
-        if self.opt.random_eval == False:
-            result = {'eval_loss': eval_loss,
-                      'eval_accuracy': eval_accuracy,
-                      'eval_f1': test_f1, }
-        else:
-            result = {'eval_loss': eval_loss,
-                      'eval_accuracy': eval_accuracy,
-                      'eval_f1': test_f1, }
-            for i in range(self.opt.random_eval_num):
-                result['eval_loss_'+str(i+1)] = eval_loss_rand[i]
-                result['eval_accuracy_'+str(i+1)] = eval_accuracy_rand[i]
-                result['eval_f1_'+str(i+1)] = eval_accuracy_rand[i]
+        result = {'eval_loss': eval_loss,
+                  'eval_accuracy': eval_accuracy,
+                  'eval_f1': test_f1, }
             
             
+#         torch.save(eval_vdc, f'./vis/{args.automation_type}_{args.model_init_seed}_eval_vdc.pt')
 #         if validation_increased == True:
 #             assert eval_vdc.size(0) == len(self.dataset.eval_examples)
             
@@ -866,12 +883,9 @@ class Instructor:
             input_ids, input_mask, segment_ids, label_ids, input_t_ids, input_t_mask, segment_t_ids = batch
 
             with torch.no_grad():  # Do not calculate gradient
-                if self.opt.model_class in [BertForSequenceClassification, CNN]:
-                    _, logits = saved_model(input_ids, segment_ids, input_mask, label_ids)
-                else:
-                    _, logits = saved_model(input_ids, segment_ids, input_mask, labels=label_ids,
-                                            input_t_ids=input_t_ids,
-                                            input_t_mask=input_t_mask, segment_t_ids=segment_t_ids)
+                _, logits = saved_model(input_ids, segment_ids, input_mask, labels=label_ids,
+                                        input_t_ids=input_t_ids,
+                                        input_t_mask=input_t_mask, segment_t_ids=segment_t_ids)
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             tmp_test_accuracy = accuracy(logits, label_ids)
@@ -912,7 +926,7 @@ class Instructor:
 
 if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
-    args = get_config()  # Gets the user settings or default hyperparameters
+    args = get_config_2()  # Gets the user settings or default hyperparameters
     processors = {
         "restaurant": RestaurantProcessor,
         "laptop": LaptopProcessor,
@@ -926,15 +940,9 @@ if __name__ == "__main__":
 
     model_classes = {
         'cnn': CNN,
-        'fc': BertForSequenceClassification,
         'roberta': RobertaForSequenceClassification,
         'roberta_td': RobertaForSequenceClassification_TD,
-        'roberta_td_t_star': RobertaForSequenceClassification_TD_t_star,
         'roberta_gcls': RobertaForSequenceClassification_gcls,
-        'roberta_gcls_vdc_auto': RobertaForSequenceClassification_gcls_VDC_auto,
-        'roberta_gcls_m1': RobertaForSequenceClassification_gcls_m1,
-        'roberta_gcls_ffn': RobertaForSequenceClassification_gcls_FFN,
-        'roberta_gcls_auto': RobertaForSequenceClassification_gcls_auto,
         'clstm': CLSTM,
         'pf_cnn': PF_CNN,
         'tcn': TCN,
@@ -956,8 +964,6 @@ if __name__ == "__main__":
         'aen': AEN_BERT,
         'td_bert': TD_BERT,
         'td_bert_with_gcn': TD_BERT_with_GCN,
-        'gcls': BertForSequenceClassification_gcls,
-        'gcls_moe': BertForSequenceClassification_gcls_MoE,
         'bert_fc_gcn': BERT_FC_GCN,
         'td_bert_qa': TD_BERT_QA,
         'dtd_bert': DTD_BERT,
@@ -990,25 +996,20 @@ if __name__ == "__main__":
 
     args.train_batch_size = int(args.train_batch_size / args.gradient_accumulation_steps)
 
-    random.seed(args.model_init_seed)
-    np.random.seed(args.model_init_seed)
-    torch.manual_seed(args.model_init_seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.model_init_seed)
+        torch.cuda.manual_seed_all(args.seed)
     ins = Instructor(args)
-    global_init_model_state_dict = ins.init_model_state_dict
     
-    if args.model_init_seed == args.training_seed or args.training_seed == 42:
-        max_test_acc, max_test_f1 = ins.run()
-    else:
-        random.seed(args.training_seed)
-        np.random.seed(args.training_seed)
-        torch.manual_seed(args.training_seed)
-        if args.n_gpu > 0:
-            torch.cuda.manual_seed_all(args.training_seed)
-            
-        ins = Instructor(args, init_model_state_dict = global_init_model_state_dict)
-        max_test_acc, max_test_f1 = ins.run()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.n_gpu > 0:
+        torch.cuda.manual_seed_all(args.seed)
+        
+    max_test_acc, max_test_f1 = ins.run()
 
 #     with open('result.txt', 'a', encoding='utf-8') as f:
 #         f.write(str(max_test_acc)+ ',' + str(max_test_f1) + '\n')
