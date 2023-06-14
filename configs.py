@@ -9,7 +9,7 @@ def boolean_string(s):
         raise ValueError('Not a valid boolean string')
     return s == 'True'
 
-def get_config():
+def get_config_2():
     parser = argparse.ArgumentParser()
     TIMESTAMP = "{0:%Y-%m-%d--%H-%M-%S/}".format(datetime.now())
 
@@ -92,14 +92,6 @@ def get_config():
                         default=0.8,
                         type=float,
                         help="The VDC threshold.")
-    parser.add_argument("--VDC_gate_lr",
-                        default=0.0005,
-                        type=float,
-                        help="The initial learning rate for VDC_gate.")
-    parser.add_argument("--VIC_gate_lr",
-                        default=0.0005,
-                        type=float,
-                        help="The initial learning rate for VIC_gate.")
     parser.add_argument("--num_train_epochs",
                         default=3.0,
                         type=float,
@@ -109,10 +101,6 @@ def get_config():
                         type=float,
                         help="Proportion of training to perform linear learning rate warmup for. "
                              "E.g., 0.1 = 10%% of training.")
-    parser.add_argument("--save_checkpoints_steps",
-                        default=1000,
-                        type=int,
-                        help="How often to save the model checkpoint.")
     parser.add_argument("--no_cuda",
                         default=False,
                         action='store_true',
@@ -125,22 +113,6 @@ def get_config():
                         type=int,
                         default=42,
                         help="random seed for initialization")
-    parser.add_argument('--model_init_seed',
-                        type=int,
-                        default=42,
-                        help="random seed for initialization")
-    parser.add_argument('--training_seed',
-                        type=int,
-                        default=42,
-                        help="random seed for initialization")
-    parser.add_argument('--num_auto_layers',
-                        type=int,
-                        default=1,
-                        help="number of layers for GoBERTa-automation")
-    parser.add_argument('--auto_VDC_k',
-                        type=int,
-                        default=11,
-                        help="how many numbers to learn for VDC automation")
     parser.add_argument("--K",
                         default=10,
                         type=int,
@@ -164,20 +136,6 @@ def get_config():
                         default=[0],
                         type=list,
                         help=u'Enter the GPU number to specify')
-    parser.add_argument("--automation_type",
-                        default=None,
-                        type=str,
-                        required=True,
-                        help="The VDC-automation type.")
-    parser.add_argument("--forward_type",
-                        default=None,
-                        type=str,
-                        required=False,
-                        help="The forward type of gcls_ffn.")
-    parser.add_argument("--auto_k",
-                        default=2,
-                        type=int,
-                        help="The hyperparameter k of the Automatic VDC search algorithm.")
 
     # parser.add_argument('--model_name', default='lstm', type=str)
     parser.add_argument('--model_name', default='fc', type=str)  # Full connection model, that is, the output of bert is followed by full connection
@@ -195,59 +153,49 @@ def get_config():
     parser.add_argument('--initializer', default='xavier_uniform_', type=str)
     
     ###### By Cho & Jung
-    parser.add_argument('--step_threshold', type=float, default=0.5, help='threshold used for step models.')
+    parser.add_argument("--parser_info",
+                        type=str,
+                        help="surface distance or dependency graph distance"),
+    
+    parser.add_argument('--pb', type=int, default=1, help='Not used in final model.')
+    
+    parser.add_argument('--use_hVDC',
+                        type= boolean_string, default = False)
+    
+    parser.add_argument('--use_DEP',
+                        type= boolean_string, default = False)
+    
+    parser.add_argument('--use_POS',
+                        type= boolean_string, default = False)
+    
     parser.add_argument('--constant_vdc',
                         type=lambda s: [int(item) for item in s.split(',')],
                         default = None,
                         help='VDC configuration for each layer.')
+    
     parser.add_argument('--g_config',
                         type=lambda s: [int(item) for item in s.split(',')],
                         default = None,
-                        help='g_config for each layer.')
-    parser.add_argument('--gcls_att_cumul',
-                        type= boolean_string, default = False)
-    parser.add_argument('--VDC_auto',
-                        type= boolean_string, default = False)
-    parser.add_argument('--VIC_auto',
-                        type= boolean_string, default = False)
+                        help='g_config.')
+    
     parser.add_argument('--embed_dense',
                         type= boolean_string, default = False)
-    parser.add_argument('--head_wise',
-                        type= boolean_string, default = False)
-    parser.add_argument('--g_token_pos', type=int, default=1)
+    
     parser.add_argument("--graph_type",
                         type=str,
                         help="surface distance or dependency graph distance"),
-    parser.add_argument("--path_types",
-                        type=int,
-                        default = 1,
-                        help="Whether we distinguish dependency graph path types."),
+    
     parser.add_argument("--g_pooler",
                         type=str,
                         default = 'att',
                         help="The pooler type, one of att, avg, max."),
-    parser.add_argument("--a_pooler",
-                        type=str,
-                        default = 's_g_concat',
-                        help="The pooler type of automation, one of att, avg, max."),
+    
     parser.add_argument("--model_save_path", default='/home/ikhyuncho23/GoBERTa/gcls_auto' ,type=str,
                         help="The output directory where the model checkpoints will be written.")
-    parser.add_argument("--load_checkpoint", default=None ,type=str,
-                        help="Loading the checkpoint")
-    parser.add_argument("--init_checkpoint_2",default=None,type=str,
-                        help="Initial checkpoint (usually from a pre-trained BERT model).")
-    parser.add_argument("--init_checkpoint_3",default=None,type=str,
-                        help="Initial checkpoint (usually from a pre-trained BERT model).")
-    parser.add_argument("--init_checkpoint_4",default=None,type=str,
-                        help="Initial checkpoint (usually from a pre-trained BERT model).")
-    parser.add_argument("--init_checkpoint_5",default=None,type=str,
-                        help="Initial checkpoint (usually from a pre-trained BERT model).")
+    
     parser.add_argument('--lower', default=True, help='Lowercase all words.')
+    
     parser.add_argument('--do_save', type = boolean_string, default=False)
-    parser.add_argument('--random_eval', type = boolean_string, default=False)
-    parser.add_argument('--random_config_training', type = boolean_string, default=False)
-    parser.add_argument('--rct_warmup', type=int, default=-1, help='The warmup epoch for rct + moe')
-    parser.add_argument('--random_eval_num', type=int, default=1, help='Number of random evaluation')
     
     parser.add_argument('--lr', type=float, default=0.01, help='learning rate.')
     parser.add_argument('--optim', choices=['sgd', 'adagrad', 'adam', 'adamax'], default='adamax', help='Optimizer: sgd, adagrad, adam or adamax.')
