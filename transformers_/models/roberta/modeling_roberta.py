@@ -46,7 +46,7 @@ from ...utils import (
     replace_return_docstrings,
 )
 from .configuration_roberta import RobertaConfig
-
+from transformers import RobertaTokenizer
 
 logger = logging.get_logger(__name__)
 
@@ -64,6 +64,7 @@ ROBERTA_PRETRAINED_MODEL_ARCHIVE_LIST = [
     # See all RoBERTa models at https://huggingface.co/models?filter=roberta
 ]
 
+tokenizer = RobertaTokenizer.from_pretrained("roberta-base") 
 
 class RobertaEmbeddings(nn.Module):
     """
@@ -96,9 +97,6 @@ class RobertaEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(
             config.max_position_embeddings, config.hidden_size, padding_idx=self.padding_idx
         )
-        
-        
-        
         
 #         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
 #         self.activation = nn.Tanh()
@@ -345,318 +343,8 @@ class RobertaSelfAttention(nn.Module):
         return outputs
 
 
-class RobertaSelfAttention_star(nn.Module):
-    def __init__(self, config, position_embedding_type=None):
-        super().__init__()
-        if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
-            raise ValueError(
-                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads})"
-            )
-        
-        self.num_attention_heads = config.num_attention_heads
-        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
-
-        self.query = nn.Linear(config.hidden_size, self.all_head_size)
-        self.query_g_star = nn.Linear(config.hidden_size, self.all_head_size)
-        
-        self.key = nn.Linear(config.hidden_size, self.all_head_size)
-#         self.key_t_star = nn.Linear(config.hidden_size, self.all_head_size)
-        
-        self.value = nn.Linear(config.hidden_size, self.all_head_size)
-#         self.value_t_star = nn.Linear(config.hidden_size, self.all_head_size)
-
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-#         self.dense.weight.data.normal_(mean=0.0, std=config.initializer_range)
-#         if self.dense.bias is not None:
-#             self.dense.bias.data.zero_() 
-        
-        self.tanh = nn.Tanh()
-        
-        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.position_embedding_type = position_embedding_type or getattr(
-            config, "position_embedding_type", "absolute"
-        )
-        if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
-            self.max_position_embeddings = config.max_position_embeddings
-            self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
-
-        self.is_decoder = config.is_decoder
-        
-    def att_pool(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1)), dim = 1)
-        cat = torch.mean(x_y, dim=1)
-        pooled_output = self.dense(cat)
-        pooled_output = self.tanh(pooled_output)
-
-        attention_scores = torch.matmul(pooled_output.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,2)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768)
-        
-        return final_output
-    
-    def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
-        x = x.view(new_x_shape)
-        return x.permute(0, 2, 1, 3)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        output_attentions: Optional[bool] = False,
-        VDC_info = None,
-        forward_type = None,
-    ) -> Tuple[torch.Tensor]:
-        
-        ########## Query 
-        if 't_Q_replace' in forward_type:
-            t_positions = (VDC_info == 1).float()
-            not_t_positions = (VDC_info != 1).float()
-            
-            q_1 = self.query(hidden_states)
-            t_query_layer = self.query_t_star(hidden_states) * t_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_t_positions.unsqueeze(2) + t_query_layer 
-        elif 't_Q_avg' in forward_type:
-            t_positions = (VDC_info == 1).float()
-            not_t_positions = (VDC_info != 1).float()
-            
-            q_1 = self.query(hidden_states)
-            t_query_layer = self.query_t_star(hidden_states) * t_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_t_positions.unsqueeze(2) + q_1 * t_positions.unsqueeze(2) * 0.5 + t_query_layer * 0.5
-        elif 't_Q_org' in forward_type:
-            mixed_query_layer = self.query(hidden_states)
-            
-            
-            
-        elif 'g_Q_replace' in forward_type:
-            g_positions = (VDC_info == 100).float()
-            not_g_positions = (VDC_info != 100).float()
-            g_positions[:,1] = 1.0
-            not_g_positions[:,1] = 0.0
-            
-            q_1 = self.query(hidden_states)
-            g_query_layer = self.query_g_star(hidden_states) * g_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_g_positions.unsqueeze(2) + g_query_layer
-        elif 'g_Q_avg' in forward_type:
-            g_positions = (VDC_info == 100).float()
-            not_g_positions = (VDC_info != 100).float()
-            
-            g_positions[:,1] = 1.0
-            not_g_positions[:,1] = 0.0
-            
-            q_1 = self.query(hidden_states)
-            g_query_layer = self.query_g_star(hidden_states) * g_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_g_positions.unsqueeze(2) + q_1 * g_positions.unsqueeze(2) * 0.5 + g_query_layer * 0.5
-            
-        elif 'g_Q_att' in forward_type:
-            g_positions = (VDC_info == 100).float()
-            not_g_positions = (VDC_info != 100).float()
-            
-            g_positions[:,1] = 1.0
-            not_g_positions[:,1] = 0.0
-            
-#             assert (torch.sum(g_positions, dim=1) == 1.0).all()
-#             assert ((g_positions + not_g_positions) == 1.0).all()
-            
-            mixed_query_layer = self.query(hidden_states)
-#             for_jumgum = mixed_query_layer.clone()
-            
-            g_query_layer = self.query_g_star(hidden_states[:,1,:])
-            
-            mixed_query_layer[:,1,:] = self.att_pool(mixed_query_layer[:,1,:], g_query_layer)
-            
-            # 점검
-#             assert ((for_jumgum[:,2:] -  mixed_query_layer[:,2:]) == 0.0).all()
-        elif 'g_Q_att_2' in forward_type:
-            g_positions = (VDC_info == 100).float()
-            not_g_positions = (VDC_info != 100).float()
-            
-            g_positions[:,1] = 1.0
-            not_g_positions[:,1] = 0.0
-            
-#             assert (torch.sum(g_positions, dim=1) == 1.0).all()
-#             assert ((g_positions + not_g_positions) == 1.0).all()
-            
-            mixed_query_layer = self.query(hidden_states)
-            mixed_query_layer_2 = self.query_g_star(hidden_states)
-            
-        elif 'g_Q_org' in forward_type:
-            mixed_query_layer = self.query(hidden_states)
-            
-            
-            
-            
-        elif 'sg_Q_replace' in forward_type:
-            g_positions = (VDC_info == 100).float()
-            not_g_positions = (VDC_info != 100).float()
-            g_positions[:,:2] = 1.0
-            not_g_positions[:,:2] = 0.0
-            
-            q_1 = self.query(hidden_states)
-            g_query_layer = self.query_g_star(hidden_states) * g_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_g_positions.unsqueeze(2) + g_query_layer
-        elif 'sg_Q_avg' in forward_type:
-            g_positions = (VDC_info == 100).float()
-            not_g_positions = (VDC_info != 100).float()
-            g_positions[:,:2] = 1.0
-            not_g_positions[:,:2] = 0.0
-            
-#             # 점검용..!
-#             assert (g_positions + not_g_positions == 1.0).all()
-            
-            q_1 = self.query(hidden_states)
-            g_query_layer = self.query_g_star(hidden_states) * g_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_g_positions.unsqueeze(2) + q_1 * g_positions.unsqueeze(2) * 0.5 + g_query_layer * 0.5
-        elif 'sg_Q_org' in forward_type:
-            mixed_query_layer = self.query(hidden_states)
-            
-            
-        elif 'gt_Q_replace' in forward_type:
-            g_positions = (VDC_info == 1).float()
-            not_g_positions = (VDC_info != 1).float()
-            g_positions[:,1] = 1.0
-            not_g_positions[:,1] = 0.0
-            
-            q_1 = self.query(hidden_states)
-            g_query_layer = self.query_g_star(hidden_states) * g_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_g_positions.unsqueeze(2) + g_query_layer
-        elif 'gt_Q_avg' in forward_type:
-            g_positions = (VDC_info == 1).float()
-            not_g_positions = (VDC_info != 1).float()
-            
-            g_positions[:,1] = 1.0
-            not_g_positions[:,1] = 0.0
-            
-            q_1 = self.query(hidden_states)
-            g_query_layer = self.query_g_star(hidden_states) * g_positions.unsqueeze(2)
-            
-            mixed_query_layer = q_1 * not_g_positions.unsqueeze(2) + q_1 * g_positions.unsqueeze(2) * 0.5 + g_query_layer * 0.5
-        elif 'gt_Q_org' in forward_type:
-            mixed_query_layer = self.query(hidden_states)
-        
-            
-        query_layer = self.transpose_for_scores(mixed_query_layer)
-        if forward_type == 'g_Q_att_2':
-            query_layer_2 = self.transpose_for_scores(mixed_query_layer_2)
-        ##########
-        
-        is_cross_attention = encoder_hidden_states is not None
-
-        if is_cross_attention and past_key_value is not None:
-            # reuse k,v, cross_attentions
-            key_layer = past_key_value[0]
-            value_layer = past_key_value[1]
-            attention_mask = encoder_attention_mask
-        elif is_cross_attention:
-            key_layer = self.transpose_for_scores(self.key(encoder_hidden_states))
-            value_layer = self.transpose_for_scores(self.value(encoder_hidden_states))
-            attention_mask = encoder_attention_mask
-        elif past_key_value is not None:
-            key_layer = self.transpose_for_scores(self.key(hidden_states))
-            value_layer = self.transpose_for_scores(self.value(hidden_states))
-            key_layer = torch.cat([past_key_value[0], key_layer], dim=2)
-            value_layer = torch.cat([past_key_value[1], value_layer], dim=2)
-        else:
-            pass
-            key_layer = self.transpose_for_scores(self.key(hidden_states))
-            value_layer = self.transpose_for_scores(self.value(hidden_states))
-        
-        if self.is_decoder:
-            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
-            # Further calls to cross_attention layer can then reuse all cross-attention
-            # key/value_states (first "if" case)
-            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
-            # all previous decoder key/value_states. Further calls to uni-directional self-attention
-            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
-            # if encoder bi-directional self-attention `past_key_value` is always `None`
-            past_key_value = (key_layer, value_layer)
-
-        # Take the dot product between "query" and "key" to get the raw attention scores.
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        if forward_type == 'g_Q_att_2':
-            attention_scores_2 = torch.matmul(query_layer_2, key_layer.transpose(-1, -2))
-
-        if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
-            seq_length = hidden_states.size()[1]
-            position_ids_l = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
-            position_ids_r = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(1, -1)
-            distance = position_ids_l - position_ids_r
-            positional_embedding = self.distance_embedding(distance + self.max_position_embeddings - 1)
-            positional_embedding = positional_embedding.to(dtype=query_layer.dtype)  # fp16 compatibility
-
-            if self.position_embedding_type == "relative_key":
-                relative_position_scores = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-                attention_scores = attention_scores + relative_position_scores
-            elif self.position_embedding_type == "relative_key_query":
-                relative_position_scores_query = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-                relative_position_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
-                attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
-        
-        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        if forward_type == 'g_Q_att_2':
-            attention_scores_2 = attention_scores_2 / math.sqrt(self.attention_head_size)
-        
-        # attention_scores.size() = torch.tensor([32,12,128,128])
-        
-        if attention_mask is not None:
-            attention_scores = attention_scores + attention_mask
-            if forward_type == 'g_Q_att_2':
-                attention_scores_2 = attention_scores_2 + attention_mask
-        
-        # Normalize the attention scores to probabilities.
-        
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        if forward_type == 'g_Q_att_2':
-            attention_probs_2 = nn.functional.softmax(attention_scores_2, dim=-1)
-        
-        # This is actually dropping out entire tokens to attend to, which might
-        # seem a bit unusual, but is taken from the original Transformer paper.
-        attention_probs = self.dropout(attention_probs)
-        if forward_type == 'g_Q_att_2':
-            attention_probs_2 = self.dropout(attention_probs_2)
-        
-        # Mask heads if we want to
-        if head_mask is not None:
-            attention_probs = attention_probs * head_mask
-
-        context_layer = torch.matmul(attention_probs, value_layer)
-        if forward_type == 'g_Q_att_2':
-            context_layer_2 = torch.matmul(attention_probs_2, value_layer)
-        
-
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
-        context_layer = context_layer.view(new_context_layer_shape)
-        
-        if forward_type == 'g_Q_att_2':
-            context_layer_2 = context_layer_2.permute(0, 2, 1, 3).contiguous()
-            context_layer_2 = context_layer_2.view(new_context_layer_shape)
-            context_layer[:, 1, :] = self.att_pool(context_layer[:, 1, :], context_layer_2[:, 1, :])
-
-        outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
-
-        if self.is_decoder:
-            outputs = outputs + (past_key_value,)
-        return outputs
-
-    
-    
 # Copied from transformers.models.bert.modeling_bert.BertSelfAttention with Bert->Roberta
-class RobertaSelfAttention_Linear_Q(nn.Module):
+class RobertaSelfAttention_gcls(nn.Module):
     def __init__(self, config, position_embedding_type=None):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
@@ -683,85 +371,13 @@ class RobertaSelfAttention_Linear_Q(nn.Module):
 
         self.is_decoder = config.is_decoder
         
-        ######## new-Q-1
-# #         self.query_vic = nn.Linear(config.hidden_size, 4)
-#         self.query_vic_0 = nn.Parameter(torch.FloatTensor(768))
-# #         self.query_vic_1 = nn.Parameter(torch.FloatTensor(768))
-# #         self.query_vic_2 = nn.Parameter(torch.FloatTensor(768))
-# #         self.query_vic_3 = nn.Parameter(torch.FloatTensor(768))
-#         self.query_vic_0.data.normal_(mean=0.0, std=config.initializer_range)
-# #         self.query_vic_1.data.normal_(mean=0.0, std=config.initializer_range)
-# #         self.query_vic_2.data.normal_(mean=0.0, std=config.initializer_range)
-# #         self.query_vic_3.data.normal_(mean=0.0, std=config.initializer_range)
-        ########
-    
-        ######## new-Q-2
-        self.query_vic_0 = nn.Linear(config.hidden_size, config.hidden_size)
-#         self.query_vic_1 = nn.Linear(config.hidden_size, config.hidden_size)
-#         self.query_vic_2 = nn.Linear(config.hidden_size, config.hidden_size)
-#         self.query_vic_3 = nn.Linear(config.hidden_size, config.hidden_size)
         
-        # 선택: newly initialize them or use the pre-trained query as initial
-#         self.query_vic_0.weight.data = self.query.weight.data
-#         self.query_vic_0.bias.data = self.query.bias.data
-#         self.query_vic_1.weight.data = self.query.weight.data
-#         self.query_vic_1.bias.data = self.query.bias.data
-#         self.query_vic_2.weight.data = self.query.weight.data
-#         self.query_vic_2.bias.data = self.query.bias.data
-#         self.query_vic_3.weight.data = self.query.weight.data
-#         self.query_vic_3.bias.data = self.query.bias.data
-
-        # 선택: newly initialize
-#         self.query_vic_0.weight.data.normal_(mean=0.0, std=config.initializer_range)
-#         if self.query_vic_0.bias is not None:
-#             self.query_vic_0.bias.data.zero_()
-        ########
-        
-        self.VIC_gate = nn.Linear(768, 768)
-        self.VIC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
-        if self.VIC_gate.bias is not None:
-            self.VIC_gate.bias.data.zero_()
-            
-        self.VIC_gate_2 = nn.Linear(768, 48)
-        self.VIC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-        if self.VIC_gate_2.bias is not None:
-            self.VIC_gate_2.bias.data.zero_()
-            
-        self.sigmoid = nn.Sigmoid()
         self.tanh = nn.Tanh()
-        self.relu = nn.ReLU()
+        self.W1 = nn.Linear(300, config.hidden_size)
+        self.centroid = nn.Linear(config.hidden_size, 1)
+        self.att_pool_dense = nn.Linear(config.hidden_size, config.hidden_size)
         ######## 
         
-    def sg_pool(self, layer, x: torch.Tensor) -> torch.Tensor:
-        cat = torch.mean(x, dim=1)
-        pooled_output = layer(cat)
-        pooled_output = self.tanh(pooled_output)
-
-        attention_scores = torch.matmul(pooled_output.unsqueeze(1), x.transpose(1,2))
-        attention_scores = attention_scores.view(-1,2)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = torch.matmul(attention_probs.unsqueeze(1), x).view(-1, 768)
-        
-        return final_output
-    
-    def sg_concat_pool(self, layer, x: torch.Tensor) -> torch.Tensor:
-        return self.tanh(layer(x.view(-1, 2*768)))
-    
-    def a_pool(self, layer, x:torch.Tensor) -> torch.Tensor:
-        return self.tanh(layer(x))
-    
-    def all_pool(self, layer, x: torch.Tensor) -> torch.Tensor:
-        c = torch.mean(x, dim=1)
-        pooled_output = layer(c)
-        pooled_output = self.tanh(pooled_output)
-
-        attention_scores = torch.matmul(pooled_output.unsqueeze(1), x.transpose(1,2))
-        attention_scores = attention_scores.view(-1,128)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = torch.matmul(attention_probs.unsqueeze(1), x).view(-1, 768)
-        
-        return final_output
-    
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(new_x_shape)
@@ -776,190 +392,92 @@ class RobertaSelfAttention_Linear_Q(nn.Module):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
-        target_idx = None,
-        gcls_update = False,
-        g_config = None,
-        VIC_gate = None,
-        VDC_gate = None,
         VDC_info = None,
-        head_wise = None,
-        sgg_info = None,
+        DEP_info = None,
+        DEP = None,
+        use_DEP = False,
+        forward_type = None,
+        layer_i = None,
+        detail = None,
+        input_for_detail = None,
     ) -> Tuple[torch.Tensor]:
-        mixed_query_layer = self.query(hidden_states)
-        
-        # If this is instantiated as a cross-attention module, the keys
-        # and values come from an encoder; the attention mask needs to be
-        # such that the encoder's padding tokens are not attended to.
-        is_cross_attention = encoder_hidden_states is not None
-
-        if is_cross_attention and past_key_value is not None:
-            # reuse k,v, cross_attentions
-            key_layer = past_key_value[0]
-            value_layer = past_key_value[1]
-            attention_mask = encoder_attention_mask
-        elif is_cross_attention:
-            key_layer = self.transpose_for_scores(self.key(encoder_hidden_states))
-            value_layer = self.transpose_for_scores(self.value(encoder_hidden_states))
-            attention_mask = encoder_attention_mask
-        elif past_key_value is not None:
-            key_layer = self.transpose_for_scores(self.key(hidden_states))
-            value_layer = self.transpose_for_scores(self.value(hidden_states))
-            key_layer = torch.cat([past_key_value[0], key_layer], dim=2)
-            value_layer = torch.cat([past_key_value[1], value_layer], dim=2)
-        else:
-            key_layer = self.transpose_for_scores(self.key(hidden_states))
-            value_layer = self.transpose_for_scores(self.value(hidden_states))
-
-        query_layer = self.transpose_for_scores(mixed_query_layer)
-        
-        ######## new-Q-1
-#         query_vic_0 = self.query_vic_0.unsqueeze(0).unsqueeze(1).repeat(query_layer.size(0), 1, 1).view(query_layer.size(0), 1, self.num_attention_heads, self.attention_head_size).permute(0, 2, 1, 3)
-#         query_vic_1 = self.query_vic_1.unsqueeze(0).unsqueeze(1).repeat(query_layer.size(0), 1, 1).view(query_layer.size(0), 1, self.num_attention_heads, self.attention_head_size).permute(0, 2, 1, 3)
-#         query_vic_2 = self.query_vic_2.unsqueeze(0).unsqueeze(1).repeat(query_layer.size(0), 1, 1).view(query_layer.size(0), 1, self.num_attention_heads, self.attention_head_size).permute(0, 2, 1, 3)
-#         query_vic_3 = self.query_vic_3.unsqueeze(0).unsqueeze(1).repeat(query_layer.size(0), 1, 1).view(query_layer.size(0), 1, self.num_attention_heads, self.attention_head_size).permute(0, 2, 1, 3)
-        
-#         query_layer = torch.cat((query_layer, query_vic_0, query_vic_1, query_vic_2, query_vic_3), dim = 2)
-#         query_layer = torch.cat((query_layer, query_vic_0), dim = 2)
-        ########
         
         
-#         query_vic_0 = self.sg_pool(layer = self.query_vic_0, x = hidden_states[:,:2,:])
-        query_vic_0 = self.a_pool(layer = self.query_vic_0, x = hidden_states[:,2,:])
+        query_layer = self.transpose_for_scores(self.query(hidden_states))
+        key_layer = self.transpose_for_scores(self.key(hidden_states))
+        value_layer = self.transpose_for_scores(self.value(hidden_states))
         
-#         query_vic_0 = self.sg_concat_pool(layer = self.query_vic_0, x = hidden_states[:,:2,:])
-        ######## Method 1
-#         query_vic_0 = query_vic_0.unsqueeze(1).view(hidden_states.size(0), 1, 12, 64).permute(0,2,1,3)
-#         query_layer = torch.cat((query_layer, query_vic_0), dim = 2)
-        ########
-        
-        if self.is_decoder:
-            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
-            # Further calls to cross_attention layer can then reuse all cross-attention
-            # key/value_states (first "if" case)
-            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
-            # all previous decoder key/value_states. Further calls to uni-directional self-attention
-            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
-            # if encoder bi-directional self-attention `past_key_value` is always `None`
-            past_key_value = (key_layer, value_layer)
-
         # Take the dot product between "query" and "key" to get the raw attention scores.
-        
-        
-        ######## Method 1
-#         attention_scores__ = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        
-    
-        ######## Method 2
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        
-        
-        if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
-            seq_length = hidden_states.size()[1]
-            position_ids_l = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
-            position_ids_r = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(1, -1)
-            distance = position_ids_l - position_ids_r
-            positional_embedding = self.distance_embedding(distance + self.max_position_embeddings - 1)
-            positional_embedding = positional_embedding.to(dtype=query_layer.dtype)  # fp16 compatibility
-
-            if self.position_embedding_type == "relative_key":
-                relative_position_scores = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-                attention_scores = attention_scores + relative_position_scores
-            elif self.position_embedding_type == "relative_key_query":
-                relative_position_scores_query = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-                relative_position_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
-                attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
-        
-        ######### Method 1
-#         attention_scores_vic = attention_scores__[:, :, -1:, :]
-#         attention_probs_vic = nn.functional.softmax(attention_scores_vic, dim=-1)
-        
-#         context_layer_vic = torch.matmul(attention_probs_vic, value_layer)
-#         context_layer_vic = context_layer_vic.permute(0, 2, 1, 3).contiguous()
-#         new_context_layer_shape_vic = context_layer_vic.size()[:-2] + (self.all_head_size,)
-#         context_layer_vic = context_layer_vic.view(new_context_layer_shape_vic)
-#         VIC_gate = self.VIC_gate(context_layer_vic)
-#         VIC_gate = self.tanh(VIC_gate)
-#         VIC_gate = self.VIC_gate_2(VIC_gate)
-#         VIC_gate = self.sigmoid(VIC_gate)
-        
-#         attention_scores= attention_scores__[:,:, :-1,:]
-#         attention_scores[:,:,:2,:2] += VIC_gate.log().transpose(1,2).view(-1,12,2,2)
-        #########
-        
-        ######### Method 2
-        VIC_gate = self.VIC_gate(query_vic_0)
-        VIC_gate = self.tanh(VIC_gate)
-        VIC_gate = self.VIC_gate_2(VIC_gate)
-        VIC_gate = self.sigmoid(VIC_gate) +1e-10
-        
-        attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,12,2,2)
-        #########
-        
-        
-        #########
-        
-#         # Head-wise learning
-#         if VIC_gate != None:
-# #             assert attention_mask != None
-# #             assert (VIC_gate >= 0.0).all()
-#             VIC_gate = VIC_gate + 1e-10
-#             if head_wise == True:
-#                 attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,12,2,2)
-#             else:
-#                 attention_scores[:,:,:2,:2] += VIC_gate.log().view(-1,2,2).unsqueeze(1)
-            
-#         if VDC_gate != None:
-# #             assert attention_mask == None
-#             if head_wise == True:
-#                 VDC_info = VDC_info.long().unsqueeze(1).repeat(1,12,1)
-#                 VDC_gate = nn.functional.softmax(VDC_gate.reshape(VDC_info.size(0), 12, -1), dim = -1)
-#                 #y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
-#                 y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1).unsqueeze(2), torch.arange(12).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
-#                 #assert (y == y2).all()
-
-#                 attention_scores[:,:,1,2:] += (y[:,:,2:] + 1e-10).log()
-#             else:
-#                 VDC_info = VDC_info.long()
-#                 VDC_gate = nn.functional.softmax(VDC_gate, dim = -1)
-#                 # y = torch.gather(input = VDC_gate.reshape(-1, 12, 7), dim = -1, index = VDC_info)
-#                 y = VDC_gate[torch.arange(VDC_info.size(0)).unsqueeze(1), VDC_info[torch.arange(VDC_info.size(0))]]
-#                 #assert (y == y2).all()
-
-#                 attention_scores[:,:,1,2:] += (y[:, 2:] + 1e-10).log().unsqueeze(1)
-                
-        #########
-        
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        
-        # attention_scores.size() = torch.tensor([32,12,128,128])
         
         if attention_mask is not None:
             attention_scores = attention_scores + attention_mask
-        
         # Normalize the attention scores to probabilities.
-        
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+        attention_probs_ = nn.functional.softmax(attention_scores, dim=-1)
         
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
-        attention_probs = self.dropout(attention_probs)
+        attention_probs = self.dropout(attention_probs_)
         
-        # Mask heads if we want to
-        if head_mask is not None:
-            attention_probs = attention_probs * head_mask
-
         context_layer = torch.matmul(attention_probs, value_layer)
-
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(new_context_layer_shape)
+        
+        
+        if layer_i>=-1 and use_DEP == True:
+            if detail and layer_i == 0:
+                detail_g = (VDC_info[0] == 999).nonzero(as_tuple=True)[0]
+                print('-'*77)
+                print('detailed info from modeling.py')
+                print('-'*77)
+                x = VDC_info[0] == 0
+                print('[1] target according to VDC_info: ', tokenizer.convert_ids_to_tokens(input_for_detail[0][x]))
+                
+            if detail and layer_i in [0,4,8]:
+                print('-'*77)
+                detail_vdc_tokens = (attention_mask[0,0,detail_g[0],:] == 0).nonzero(as_tuple=True)[0]
+                print(f'[2] tokens attended by [g] at layer {layer_i}:')
+                print(tokenizer.convert_ids_to_tokens(input_for_detail[0][detail_vdc_tokens]))
+                
+            # 1. DEP 정보를 반영.
+            dep_emb = DEP(DEP_info)
+#             dep_emb = POS(POS_info)
+#             dep_emb = DEP(VDC_info)
+                
+    
+            hidden_states_g = self.tanh(hidden_states + self.W1(dep_emb))
+            
+            mixed_query_layer_g = self.query(hidden_states_g)
+            mixed_key_layer_g = self.key(hidden_states_g)
+            mixed_value_layer_g = self.value(hidden_states_g)
+            
+            query_layer_g = self.transpose_for_scores(mixed_query_layer_g)
+            key_layer_g = self.transpose_for_scores(mixed_key_layer_g)
+            value_layer_g = self.transpose_for_scores(mixed_value_layer_g)
+            
+            attention_scores_g = torch.matmul(query_layer_g, key_layer_g.transpose(-1, -2))
+            attention_scores_g = attention_scores_g / math.sqrt(self.attention_head_size)
+            attention_scores_g = attention_scores_g + attention_mask
+            
+            attention_probs_g = nn.Softmax(dim=-1)(attention_scores_g)
+            attention_probs_g = self.dropout(attention_probs_g)
+            
+            context_layer_g = torch.matmul(attention_probs_g, value_layer_g)
+            context_layer_g = context_layer_g.permute(0, 2, 1, 3).contiguous()
+            new_context_layer_shape_g = context_layer_g.size()[:-2] + (self.all_head_size,)
+            context_layer_g = context_layer_g.view(*new_context_layer_shape_g)
+            
+            zz = (VDC_info == 999).nonzero(as_tuple=True)[1]
+            
+            context_layer[range(hidden_states.size(0)),zz] = context_layer_g[range(hidden_states.size(0)), zz]
+            
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
-
-        if self.is_decoder:
-            outputs = outputs + (past_key_value,)
+        
         return outputs
-    
+            
     
 # Copied from transformers.models.bert.modeling_bert.BertSelfOutput
 class RobertaSelfOutput(nn.Module):
@@ -1027,34 +545,15 @@ class RobertaAttention(nn.Module):
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
-
-class RobertaAttention_star(nn.Module):
+    
+# Copied from transformers.models.bert.modeling_bert.BertAttention with Bert->Roberta
+class RobertaAttention_gcls(nn.Module):
     def __init__(self, config, position_embedding_type=None):
         super().__init__()
-#         self.self = RobertaSelfAttention_star(config, position_embedding_type=position_embedding_type)
-        
-        self.self = RobertaSelfAttention(config, position_embedding_type=position_embedding_type)
-        ##### star model
-        self.self_star = RobertaSelfAttention(config, position_embedding_type=position_embedding_type)
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.tanh = nn.Tanh()
-        
+        self.self = RobertaSelfAttention_gcls(config, position_embedding_type=position_embedding_type)
         self.output = RobertaSelfOutput(config)
         self.pruned_heads = set()
-    
-    def att_pool(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1)), dim = 1)
-        cat = torch.mean(x_y, dim=1)
-        pooled_output = self.dense(cat)
-        pooled_output = self.tanh(pooled_output)
 
-        attention_scores = torch.matmul(pooled_output.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,2)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768)
-        
-        return final_output
-    
     def prune_heads(self, heads):
         if len(heads) == 0:
             return
@@ -1083,7 +582,12 @@ class RobertaAttention_star(nn.Module):
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
         VDC_info = None,
-        forward_type = None,
+        DEP_info = None,
+        DEP = None,
+        use_DEP = False,
+        detail = None,
+        input_for_detail = None,
+        layer_i = None,
     ) -> Tuple[torch.Tensor]:
         self_outputs = self.self(
             hidden_states,
@@ -1094,41 +598,17 @@ class RobertaAttention_star(nn.Module):
             past_key_value,
             output_attentions,
             VDC_info = VDC_info,
-            forward_type = forward_type,
+            DEP_info = DEP_info,
+            DEP = DEP,
+            use_DEP = use_DEP,
+            detail = detail,
+            input_for_detail = input_for_detail,
+            layer_i = layer_i,
         )
-        if 'g_SA_att' in forward_type:
-            self_outputs_2 = self.self_star(
-                hidden_states,
-                attention_mask,
-                head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                past_key_value,
-                output_attentions,
-                VDC_info = VDC_info,
-                forward_type = forward_type,
-            )
-            self_outputs[0][:,1,:] = self.att_pool(self_outputs[0][:,1,:], self_outputs_2[0][:,1,:])
-            
-        elif 'sg_SA_att' in forward_type:
-            self_outputs_2 = self.self_star(
-                hidden_states,
-                attention_mask,
-                head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                past_key_value,
-                output_attentions,
-                VDC_info = VDC_info,
-                forward_type = forward_type,
-            )
-            self_outputs[0][:,1,:] = self.att_pool(self_outputs[0][:,1,:], self_outputs_2[0][:,1,:])
-            self_outputs[0][:,0,:] = self.att_pool(self_outputs[0][:,0,:], self_outputs_2[0][:,0,:])
-            
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
-
+    
     
 # Copied from transformers.models.bert.modeling_bert.BertIntermediate
 class RobertaIntermediate(nn.Module):
@@ -1250,15 +730,15 @@ class RobertaLayer(nn.Module):
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
-
-
+        
+    
 # Copied from transformers.models.bert.modeling_bert.BertLayer with Bert->Roberta
-class RobertaLayer_star(nn.Module):
+class RobertaLayer_gcls(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = RobertaAttention_star(config)
+        self.attention = RobertaAttention_gcls(config)
         self.is_decoder = config.is_decoder
         self.add_cross_attention = config.add_cross_attention
         if self.add_cross_attention:
@@ -1268,25 +748,6 @@ class RobertaLayer_star(nn.Module):
         self.intermediate = RobertaIntermediate(config)
         self.output = RobertaOutput(config)
         
-        # If forward_type in ['g_FFN_att', 'sg_FFN_att']
-        self.intermediate_g_star = RobertaIntermediate(config)
-        self.output_g_star = RobertaOutput(config)
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.tanh = nn.Tanh()
-        
-    def att_pool(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1)), dim = 1)
-        cat = torch.mean(x_y, dim=1)
-        pooled_output = self.dense(cat)
-        pooled_output = self.tanh(pooled_output)
-
-        attention_scores = torch.matmul(pooled_output.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,2)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768)
-        
-        return final_output
-    
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1297,7 +758,13 @@ class RobertaLayer_star(nn.Module):
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
         VDC_info = None,
+        DEP_info = None,
+        DEP = None,
+        use_DEP = False,
+        detail = None,
+        input_for_detail = None,
         forward_type = None,
+        layer_i = None,
     ) -> Tuple[torch.Tensor]:
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -1309,7 +776,12 @@ class RobertaLayer_star(nn.Module):
             output_attentions=output_attentions,
             past_key_value=self_attn_past_key_value,
             VDC_info = VDC_info,
-            forward_type = forward_type,
+            DEP_info = DEP_info,
+            DEP = DEP,
+            use_DEP = use_DEP,
+            detail = detail,
+            input_for_detail = input_for_detail,
+            layer_i = layer_i
         )
         attention_output = self_attention_outputs[0]
 
@@ -1346,48 +818,9 @@ class RobertaLayer_star(nn.Module):
             cross_attn_present_key_value = cross_attention_outputs[-1]
             present_key_value = present_key_value + cross_attn_present_key_value
 
-        if forward_type not in ['g_FFN_att', 'g_FFN_replace', 'sg_FFN_att', 'sg_FFN_replace']:
-            layer_output = apply_chunking_to_forward(
-            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
-            )
-        else:
-            layer_output = apply_chunking_to_forward(
+        layer_output = apply_chunking_to_forward(
             self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
         )
-            if forward_type in ['g_FFN_att', 'g_FFN_replace']:
-                layer_output_g_star = apply_chunking_to_forward(
-                    self.feed_forward_chunk_g_star, self.chunk_size_feed_forward, self.seq_len_dim, attention_output[:,1,:]
-                )
-                
-                g_positions = (VDC_info == 100).float()
-                not_g_positions = (VDC_info != 100).float()
-                g_positions[:,1] = 1.0
-                not_g_positions[:,1] = 0.0
-            elif forward_type in ['sg_FFN_att', 'sg_FFN_replace']:
-                layer_output_sg_star = apply_chunking_to_forward(
-                    self.feed_forward_chunk_g_star, self.chunk_size_feed_forward, self.seq_len_dim, attention_output[:,:2,:]
-                )
-            
-                sg_positions = (VDC_info == 100).float()
-                not_sg_positions = (VDC_info != 100).float()
-                sg_positions[:,:2] = 1.0
-                not_sg_positions[:,:2] = 0.0
-            
-            if forward_type == 'g_FFN_att':
-                layer_output[:,1,:] = self.att_pool(layer_output[:,1,:], layer_output_g_star)
-            
-            elif forward_type == 'sg_FFN_att':
-                layer_output[:,0,:] = self.att_pool(layer_output[:,0,:], layer_output_sg_star[:,1,:])
-                layer_output[:,1,:] = self.att_pool(layer_output[:,1,:], layer_output_sg_star[:,0,:])
-            
-            elif forward_type == 'g_FFN_replace':
-                layer_output = layer_output_ * not_g_positions.unsqueeze(2) \
-                           + layer_output_g_star * g_positions.unsqueeze(2)
-                
-            elif forward_type == 'sg_FFN_replace':
-                layer_output = layer_output_ * not_sg_positions.unsqueeze(2) \
-                           + layer_output_sg_star * sg_positions.unsqueeze(2)
-        
         outputs = (layer_output,) + outputs
 
         # if decoder, return the attn key/values as the last output
@@ -1400,527 +833,8 @@ class RobertaLayer_star(nn.Module):
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
-    
-    def feed_forward_chunk_g_star(self, attention_output):
-        intermediate_output = self.intermediate_g_star(attention_output)
-        layer_output = self.output_g_star(intermediate_output, attention_output)
-        return layer_output
-    
-    
-class RobertaLayer_auto(nn.Module):
-    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler):
-        super().__init__()
-        self.chunk_size_feed_forward = config.chunk_size_feed_forward
-        self.seq_len_dim = 1
-        self.attention = RobertaAttention(config)
-        self.is_decoder = config.is_decoder
-        self.add_cross_attention = config.add_cross_attention
-        if self.add_cross_attention:
-            if not self.is_decoder:
-                raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
-            self.crossattention = RobertaAttention(config, position_embedding_type="absolute")
-        self.intermediate = RobertaIntermediate(config)
-        self.output = RobertaOutput(config)
         
-        self.VDC_auto = VDC_auto
-        self.VIC_auto = VIC_auto
-        self.num_auto_layers = num_auto_layers
-        self.head_wise = head_wise
-        self.a_pooler = a_pooler
         
-        self.VDC_gate, self.VDC_gate_2, self.VIC_gate, self.VIC_gate_2 = None, None, None, None
-        
-        if num_auto_layers == 0:
-            if VDC_auto == True:
-                if head_wise == True:
-                    self.VDC_gate = nn.Parameter(torch.FloatTensor(12*(auto_VDC_k+2)))
-                else:
-                    self.VDC_gate = nn.Parameter(torch.FloatTensor(auto_VDC_k+2))
-            
-            if VIC_auto == True:
-                if head_wise == True:
-                    self.VIC_gate = nn.Parameter(torch.FloatTensor(12*4))
-                else:
-                    self.VIC_gate = nn.Parameter(torch.FloatTensor(4))
-                    
-        else:
-            if VDC_auto == True:
-                if head_wise == True:
-                    if a_pooler in ['t_max_concat', 't_avg_concat', 's_g_a_concat']:
-                        if num_auto_layers == 1:
-                            self.VDC_gate = nn.Linear(3*768, 12*(auto_VDC_k+2))
-                        elif num_auto_layers == 2:
-                            self.VDC_gate = nn.Linear(3*768, 768)
-                            self.VDC_gate_2 = nn.Linear(768, 12*(auto_VDC_k+2))
-                            
-                    elif a_pooler in ['s_g_concat']:
-                        if num_auto_layers == 1:
-                            self.VDC_gate = nn.Linear(2*768, 12*(auto_VDC_k+2))
-                        elif num_auto_layers == 2:
-                            self.VDC_gate = nn.Linear(2*768, 768)
-                            self.VDC_gate_2 = nn.Linear(768, 12*(auto_VDC_k+2))
-                            
-                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all', 'a', 's_g_a_avg']:
-                        if num_auto_layers == 1:
-                            self.VDC_gate = nn.Linear(768, 12*(auto_VDC_k+2))
-                        elif num_auto_layers == 2:
-                            self.VDC_gate = nn.Linear(768, 768)
-                            self.VDC_gate_2 = nn.Linear(768, 12*(auto_VDC_k+2))
-                else:
-                    if a_pooler in ['t_max_concat', 't_avg_concat', 's_g_a_concat']:
-                        if num_auto_layers == 1:
-                            self.VDC_gate = nn.Linear(3*768, auto_VDC_k+2)
-                        elif num_auto_layers == 2:
-                            self.VDC_gate = nn.Linear(3*768, 768)
-                            self.VDC_gate_2 = nn.Linear(768, auto_VDC_k+2)
-                            
-                    elif a_pooler in ['s_g_concat']:
-                        if num_auto_layers == 1:
-                            self.VDC_gate = nn.Linear(2*768, auto_VDC_k+2)
-                        elif num_auto_layers == 2:
-                            self.VDC_gate = nn.Linear(2*768, 768)
-                            self.VDC_gate_2 = nn.Linear(768, auto_VDC_k+2)
-                            
-                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all', 'a', 's_g_a_avg']:
-                        if num_auto_layers == 1:
-                            self.VDC_gate = nn.Linear(768, auto_VDC_k+2)
-                        elif num_auto_layers == 2:
-                            self.VDC_gate = nn.Linear(768, 768)
-                            self.VDC_gate_2 = nn.Linear(768, auto_VDC_k+2)
-                        
-            if VIC_auto == True:
-                if head_wise == True:
-                    if a_pooler in ['t_max_concat', 't_avg_concat', 's_g_a_concat']:
-                        if num_auto_layers == 1:
-                            self.VIC_gate = nn.Linear(3*768, 12*4)
-                        elif num_auto_layers == 2:
-                            self.VIC_gate = nn.Linear(3*768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 12*4)
-                        elif num_auto_layers == 3:
-                            self.VIC_gate = nn.Linear(3*768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 768)
-                            self.VIC_gate_3 = nn.Linear(768, 48)
-                            
-                    elif a_pooler in ['s_g_concat']:
-                        if num_auto_layers == 1:
-                            self.VIC_gate = nn.Linear(2*768, 12*4)
-                        elif num_auto_layers == 2:
-                            self.VIC_gate = nn.Linear(2*768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 12*4)
-                            
-                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all', 'a', 's_g_a_avg']:
-                        if num_auto_layers == 1:
-                            self.VIC_gate = nn.Linear(768, 12*4)
-                        elif num_auto_layers == 2:
-                            self.VIC_gate = nn.Linear(768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 12*4)
-                        elif num_auto_layers == 3:
-                            self.VIC_gate = nn.Linear(768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 768)
-                            self.VIC_gate_3 = nn.Linear(768, 12*4)
-                else:
-                    if a_pooler in ['t_max_concat', 't_avg_concat', 's_g_a_concat']:
-                        if num_auto_layers == 1:
-                            self.VIC_gate = nn.Linear(3*768, 4)
-                        elif num_auto_layers == 2:
-                            self.VIC_gate = nn.Linear(3*768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 4)
-                        elif num_auto_layers == 3:
-                            self.VIC_gate = nn.Linear(3*768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 768)
-                            self.VIC_gate_3 = nn.Linear(768, 4)
-                            
-                    elif a_pooler in ['s_g_concat']:
-                        if num_auto_layers == 1:
-                            self.VIC_gate = nn.Linear(2*768, 4)
-                        elif num_auto_layers == 2:
-                            self.VIC_gate = nn.Linear(2*768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 4)
-                            
-                    elif a_pooler in ['t_avg_only', 't_avg_all', 't_max_only', 't_max_all', 'a', 's_g_a_avg']:
-                        if num_auto_layers == 1:
-                            self.VIC_gate = nn.Linear(768, 4)
-                        elif num_auto_layers == 2:
-                            self.VIC_gate = nn.Linear(768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 4)
-                        elif num_auto_layers == 3:
-                            self.VIC_gate = nn.Linear(768, 768)
-                            self.VIC_gate_2 = nn.Linear(768, 768)
-                            self.VIC_gate_3 = nn.Linear(768, 4)
-            
-        print('='*77)
-        print('Automation info: ')
-        print('-'*77)
-        print('VDC_auto: ', self.VDC_auto)
-        print('VIC_auto: ', self.VIC_auto)
-        print('head_wise: ', self.head_wise)
-        print('num_auto_layers: ', self.num_auto_layers)
-        print('auto_VDC_k: ', auto_VDC_k)
-        print('a_pooler: ', self.a_pooler)
-        print('-'*77)
-        
-        if self.num_auto_layers >=1 :
-            if self.VDC_gate != None:
-                print('self.VDC_gate.weight.size(): ', self.VDC_gate.weight.size())
-            else:
-                print('self.VDC_gate: ', self.VDC_gate)
-
-            if self.VDC_gate_2 != None:
-                print('self.VDC_gate_2.weight.size(): ', self.VDC_gate_2.weight.size())
-            else:
-                print('self.VDC_gate_2: ', self.VDC_gate_2)
-
-            if self.VIC_gate != None:
-                print('self.VIC_gate.weight.size(): ', self.VIC_gate.weight.size())
-            else:
-                print('self.VIC_gate: ', self.VIC_gate)
-
-            if self.VIC_gate_2 != None:
-                print('self.VIC_gate_2.weight.size(): ', self.VIC_gate_2.weight.size())
-            else:
-                print('self.VIC_gate_2: ', self.VIC_gate_2)
-            print('-'*77)
-            
-        else:
-            if self.VDC_gate != None:
-                print('self.VDC_gate.data.size(): ', self.VDC_gate.data.size())
-            else:
-                print('self.VDC_gate: ', self.VDC_gate)
-
-            if self.VIC_gate != None:
-                print('self.VIC_gate.data.size(): ', self.VIC_gate.data.size())
-            else:
-                print('self.VIC_gate: ', self.VIC_gate)
-
-            print('-'*77)
-        
-        self.sigmoid = nn.Sigmoid()
-        self.tanh = nn.Tanh()
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
-        if num_auto_layers == 0:
-            if VDC_auto == True:
-                self.VDC_gate.data.normal_(mean=0.0, std=config.initializer_range)
-                
-        elif num_auto_layers == 1:
-            if VDC_auto == True:
-                self.VDC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VDC_gate.bias is not None:
-                    self.VDC_gate.bias.data.zero_()
-            if VIC_auto == True:
-                self.VIC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VIC_gate.bias is not None:
-                    self.VIC_gate.bias.data.zero_()
-                    
-        elif num_auto_layers == 2:
-            if VDC_auto == True:
-                self.VDC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VDC_gate.bias is not None:
-                    self.VDC_gate.bias.data.zero_()
-                    
-                self.VDC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VDC_gate_2.bias is not None:
-                    self.VDC_gate_2.bias.data.zero_()
-                    
-            if VIC_auto == True:
-                self.VIC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VIC_gate.bias is not None:
-                    self.VIC_gate.bias.data.zero_()
-                    
-                self.VIC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VIC_gate_2.bias is not None:
-                    self.VIC_gate_2.bias.data.zero_()
-                    
-        elif num_auto_layers == 3:
-            if VIC_auto == True:
-                self.VIC_gate.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VIC_gate.bias is not None:
-                    self.VIC_gate.bias.data.zero_()
-                    
-                self.VIC_gate_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VIC_gate_2.bias is not None:
-                    self.VIC_gate_2.bias.data.zero_()
-                    
-                self.VIC_gate_3.weight.data.normal_(mean=0.0, std=config.initializer_range)
-                if self.VIC_gate_3.bias is not None:
-                    self.VIC_gate_3.bias.data.zero_()
-            
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        output_attentions: Optional[bool] = False,
-        target_idx = None,
-        gcls_update = False,
-        g_config = None,
-        VDC_info = None,
-        automation_visualization = None,
-    ) -> Tuple[torch.Tensor]:
-        # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
-        
-        ## Automating VDC & VIC
-        mask = (VDC_info == 1).long().unsqueeze(2)
-        
-        #################################
-        if self.a_pooler == 't_avg_only':
-            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
-            V_input = self.dropout(pooled)
-        elif self.a_pooler == 't_avg_all':
-            mask[:, :2] = 1 # Allows considering s and g
-            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
-            V_input = self.dropout(pooled)
-        elif self.a_pooler == 't_max_only':
-            index_2 = (VDC_info != 1).long()*-float('inf')
-            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
-            mask_2 = index_2.unsqueeze(2)
-            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
-            V_input = self.dropout(pooled)
-        elif self.a_pooler == 't_max_all':
-            mask[:, :2] = 1 # Allows considering s and g
-            index_2 = (VDC_info != 1).long()*-float('inf')
-            index_2[:,:2] = 0 # Allows considering s and g
-            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
-            mask_2 = index_2.unsqueeze(2)
-            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
-            V_input = self.dropout(pooled)
-        elif self.a_pooler == 't_avg_concat':
-            pooled = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
-            concat_vector = torch.cat((hidden_states[:,:2], pooled.unsqueeze(1)), dim = 1).reshape(-1, 3*768)
-            V_input = self.dropout(concat_vector)
-        elif self.a_pooler == 't_max_concat':
-            index_2 = (VDC_info != 1).long()*-float('inf')
-            index_2[index_2 != index_2] = 0 # change 0 * -inf = nan to zero
-            mask_2 = index_2.unsqueeze(2)
-            pooled = torch.max(hidden_states*mask + mask_2, dim = 1)[0]
-            concat_vector = torch.cat((hidden_states[:,:2], pooled.unsqueeze(1)), dim = 1).reshape(-1, 3*768)
-            V_input = self.dropout(concat_vector)
-            
-        elif self.a_pooler == 's_g_concat':
-            V_input = hidden_states[:, :2].view(-1, 2*768)
-            
-        elif self.a_pooler == 'a':
-            V_input = hidden_states[:, 2].view(-1, 768)
-            
-        elif self.a_pooler == 's_g_a_concat':
-            V_input = hidden_states[:, :3].view(-1, 3*768)
-            
-        elif self.a_pooler == 's_g_a_avg':
-            V_input = torch.mean(hidden_states[:, :3], dim= 1)
-        #################################
-        
-        VDC_gate, VIC_gate = None, None
-        if self.VDC_auto == True:
-            if self.num_auto_layers == 0:
-#                 w = self.VDC_gate.data
-#                 w = w.clamp(0.0,1.0)
-                VDC_gate = self.VDC_gate.unsqueeze(0).repeat(V_input.size(0),1)
-            elif self.num_auto_layers == 1:
-                VDC_gate = self.VDC_gate(V_input)
-            elif self.num_auto_layers == 2:
-                VDC_gate = self.VDC_gate(V_input)
-                VDC_gate = self.tanh(VDC_gate)
-                VDC_gate = self.VDC_gate_2(VDC_gate)
-                
-        if self.VIC_auto == True:
-            if self.num_auto_layers == 0:
-                VIC_gate = self.VIC_gate
-                VIC_gate = self.sigmoid(VIC_gate)
-            elif self.num_auto_layers == 1:
-                VIC_gate = self.VIC_gate(V_input)
-                VIC_gate = self.sigmoid(VIC_gate)
-            elif self.num_auto_layers == 2:
-                VIC_gate = self.VIC_gate(V_input)
-                VIC_gate = self.tanh(VIC_gate)
-                VIC_gate = self.VIC_gate_2(VIC_gate)
-                VIC_gate = self.sigmoid(VIC_gate)
-                
-        # 사실 위에 두 개 합치는게 낫긴 함
-        
-        self_attention_outputs = self.attention(
-            hidden_states,
-            attention_mask,
-            head_mask,
-            output_attentions=output_attentions,
-            past_key_value=self_attn_past_key_value,
-            target_idx = target_idx,
-            gcls_update = gcls_update,
-            g_config = g_config,
-            VIC_gate = VIC_gate,
-            VDC_gate = VDC_gate,
-            VDC_info = VDC_info,
-            head_wise = self.head_wise,
-        )
-        attention_output = self_attention_outputs[0]
-
-        # if decoder, the last output is tuple of self-attn cache
-        if self.is_decoder:
-            outputs = self_attention_outputs[1:-1]
-            present_key_value = self_attention_outputs[-1]
-        else:
-            outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
-
-        cross_attn_present_key_value = None
-        if self.is_decoder and encoder_hidden_states is not None:
-            if not hasattr(self, "crossattention"):
-                raise ValueError(
-                    f"If `encoder_hidden_states` are passed, {self} has to be instantiated with cross-attention layers"
-                    " by setting `config.add_cross_attention=True`"
-                )
-
-            # cross_attn cached key/values tuple is at positions 3,4 of past_key_value tuple
-            cross_attn_past_key_value = past_key_value[-2:] if past_key_value is not None else None
-            cross_attention_outputs = self.crossattention(
-                attention_output,
-                attention_mask,
-                head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                cross_attn_past_key_value,
-                output_attentions,
-            )
-            attention_output = cross_attention_outputs[0]
-            outputs = outputs + cross_attention_outputs[1:-1]  # add cross attentions if we output attention weights
-
-            # add cross-attn cache to positions 3,4 of present_key_value tuple
-            cross_attn_present_key_value = cross_attention_outputs[-1]
-            present_key_value = present_key_value + cross_attn_present_key_value
-
-        layer_output = apply_chunking_to_forward(
-            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
-        )
-        outputs = (layer_output,) + outputs
-
-        # if decoder, return the attn key/values as the last output
-        if self.is_decoder:
-            outputs = outputs + (present_key_value,)
-        
-        vis_vdc, vis_vic = None, None
-        if automation_visualization == True:
-            if self.VDC_auto == True:
-                if self.head_wise == True:
-                    vis_vdc = nn.functional.softmax(VDC_gate.clone().reshape(VDC_info.size(0), 12, -1), dim = -1)
-                else:
-                    vis_vdc = nn.functional.softmax(VDC_gate.clone(), dim = -1)
-                    
-            if self.VIC_auto == True:
-                if self.head_wise == True:
-                    vis_vic = VIC_gate.clone().reshape(VDC_info.size(0), 12, 4)
-                else:
-                    vis_vic = VIC_gate.clone()
-            return outputs, (vis_vdc, vis_vic)
-        
-        else:
-            return outputs, None
-
-    def feed_forward_chunk(self, attention_output):
-        intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
-        return layer_output
-    
-    
-class RobertaLayer_auto_2(nn.Module):
-    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler):
-        super().__init__()
-        self.chunk_size_feed_forward = config.chunk_size_feed_forward
-        self.seq_len_dim = 1
-        self.attention = RobertaAttention(config)
-        self.is_decoder = config.is_decoder
-        self.add_cross_attention = config.add_cross_attention
-        if self.add_cross_attention:
-            if not self.is_decoder:
-                raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
-            self.crossattention = RobertaAttention(config, position_embedding_type="absolute")
-        self.intermediate = RobertaIntermediate(config)
-        self.output = RobertaOutput(config)
-            
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        output_attentions: Optional[bool] = False,
-        target_idx = None,
-        gcls_update = False,
-        g_config = None,
-        VDC_info = None,
-        automation_visualization = None,
-    ) -> Tuple[torch.Tensor]:
-        # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
-        
-        self_attention_outputs = self.attention(
-            hidden_states,
-            attention_mask,
-            head_mask,
-            output_attentions=output_attentions,
-            past_key_value=self_attn_past_key_value,
-            target_idx = target_idx,
-            gcls_update = gcls_update,
-            g_config = g_config,
-            VIC_gate = VIC_gate,
-            VDC_gate = VDC_gate,
-            VDC_info = VDC_info,
-            head_wise = self.head_wise,
-        )
-        attention_output = self_attention_outputs[0]
-
-        # if decoder, the last output is tuple of self-attn cache
-        if self.is_decoder:
-            outputs = self_attention_outputs[1:-1]
-            present_key_value = self_attention_outputs[-1]
-        else:
-            outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
-
-        cross_attn_present_key_value = None
-        if self.is_decoder and encoder_hidden_states is not None:
-            if not hasattr(self, "crossattention"):
-                raise ValueError(
-                    f"If `encoder_hidden_states` are passed, {self} has to be instantiated with cross-attention layers"
-                    " by setting `config.add_cross_attention=True`"
-                )
-
-            # cross_attn cached key/values tuple is at positions 3,4 of past_key_value tuple
-            cross_attn_past_key_value = past_key_value[-2:] if past_key_value is not None else None
-            cross_attention_outputs = self.crossattention(
-                attention_output,
-                attention_mask,
-                head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
-                cross_attn_past_key_value,
-                output_attentions,
-            )
-            attention_output = cross_attention_outputs[0]
-            outputs = outputs + cross_attention_outputs[1:-1]  # add cross attentions if we output attention weights
-
-            # add cross-attn cache to positions 3,4 of present_key_value tuple
-            cross_attn_present_key_value = cross_attention_outputs[-1]
-            present_key_value = present_key_value + cross_attn_present_key_value
-
-        layer_output = apply_chunking_to_forward(
-            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
-        )
-        outputs = (layer_output,) + outputs
-
-        # if decoder, return the attn key/values as the last output
-        if self.is_decoder:
-            outputs = outputs + (present_key_value,)
-        
-        return outputs, None
-
-    def feed_forward_chunk(self, attention_output):
-        intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
-        return layer_output
-    
 # Copied from transformers.models.bert.modeling_bert.BertEncoder with Bert->Roberta
 class RobertaEncoder(nn.Module):
     def __init__(self, config):
@@ -2021,116 +935,13 @@ class RobertaEncoder(nn.Module):
         )
 
     
-class RobertaEncoder_star(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-#         self.layer = nn.ModuleList([RobertaLayer_t_star(config) for _ in range(config.num_hidden_layers)])
-        
-#         self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(9)]) \
-#                     +nn.ModuleList([RobertaLayer_star(config) for _ in range(3)])
-        
-        
-        self.gradient_checkpointing = False
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-        VDC_info = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-        
-        next_decoder_cache = () if use_cache else None
-        for i, layer_module in enumerate(self.layer):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-            past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if self.gradient_checkpointing and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                    )
-                    use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
-            else:
-                layer_outputs = layer_module(
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    past_key_value,
-                    output_attentions,
-                    VDC_info = VDC_info,
-                )
-
-            hidden_states = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache += (layer_outputs[-1],)
-            if output_attentions:
-                all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
-
-    
 class RobertaEncoder_gcls(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([RobertaLayer_gcls(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
+        self.DEP = nn.Embedding(1000, 300, padding_idx = 99)
 
     def forward(
         self,
@@ -2145,6 +956,10 @@ class RobertaEncoder_gcls(nn.Module):
         output_hidden_states: Optional[bool] = False,
         return_dict: Optional[bool] = True,
         VDC_info = None,
+        DEP_info = None,
+        use_DEP = False,
+        detail = None,
+        input_for_detail = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -2155,148 +970,6 @@ class RobertaEncoder_gcls(nn.Module):
         
         next_decoder_cache = () if use_cache else None
         for i, layer_module in enumerate(self.layer):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-                
-#             if sg_output:
-#                 all_s_outputs = all_s_outputs + (hidden_states[:,0],)
-#                 all_g_outputs = all_g_outputs + (hidden_states[:,1],)
-
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-            past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if self.gradient_checkpointing and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                    )
-                    use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
-            else:
-                att_mask = attention_mask[i].clone()
-                
-#                 if i > 700000 :
-#                     gcls_update = True
-#                 else:
-#                     gcls_update = False
-                gcls_update = False
-                
-                layer_outputs = layer_module(
-                    hidden_states,
-                    att_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    past_key_value,
-                    output_attentions,
-                    VDC_info = VDC_info,
-                )
-
-            hidden_states = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache += (layer_outputs[-1],)
-            if output_attentions:
-                all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-        
-#         if sg_output:
-#             all_s_outputs = all_s_outputs + (hidden_states[:,0],)
-#             all_g_outputs = all_g_outputs + (hidden_states[:,1],)
-            
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
-    
-class RobertaEncoder_gcls_star(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-#         self.layer = nn.ModuleList([RobertaLayer_star(config) for _ in range(config.num_hidden_layers)])
-        
-        # layer level인경우:
-#         self.dense = nn.ModuleList([nn.Linear(config.hidden_size, config.hidden_size) for _ in range(12)])
-#         self.tanh = nn.Tanh()
-#         self.layer = nn.ModuleList([RobertaLayer_star(config) for _ in range(12)]) \
-#                     +nn.ModuleList([RobertaLayer(config) for _ in range(12)])
-        
-        # 그보다 작은 level인 경우:
-        self.layer = nn.ModuleList([RobertaLayer(config) for _ in range(0)]) \
-                    +nn.ModuleList([RobertaLayer_star(config) for _ in range(12)])
-                
-        self.gradient_checkpointing = False
-    
-    def att_pool(self, x: torch.Tensor, y: torch.Tensor, ii) -> torch.Tensor:
-        x_y = torch.cat((x.unsqueeze(1), y.unsqueeze(1)), dim = 1)
-        cat = torch.mean(x_y, dim=1)
-        pooled_output = self.dense[ii](cat)
-        pooled_output = self.tanh(pooled_output)
-
-        attention_scores = torch.matmul(pooled_output.unsqueeze(1), x_y.transpose(1,2))
-        attention_scores = attention_scores.view(-1,2)
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        final_output = torch.matmul(attention_probs.unsqueeze(1), x_y).view(-1, 768)
-        
-        return final_output
-                
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-        VDC_info = None,
-        forward_type = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-        
-#         all_s_outputs = () if sg_output else None
-#         all_g_outputs = () if sg_output else None
-        
-        next_decoder_cache = () if use_cache else None
-        for i, layer_module in enumerate(self.layer[:12]):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
                 
@@ -2343,34 +1016,13 @@ class RobertaEncoder_gcls_star(nn.Module):
                     past_key_value,
                     output_attentions,
                     VDC_info = VDC_info,
-                    forward_type = forward_type,
-                )
-                
-                if 'g_layer' in forward_type or 'sg_layer' in forward_type:
-                    layer_outputs_star = self.layer[i+12](
-                        hidden_states,
-                        att_mask,
-                        layer_head_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        past_key_value,
-                        output_attentions,
-                        VDC_info = VDC_info,
-                        forward_type = forward_type,
+                    DEP_info = DEP_info,
+                    DEP = self.DEP,
+                    use_DEP = use_DEP,
+                    detail = detail,
+                    input_for_detail = input_for_detail,
+                    layer_i = i,
                     )
-                    
-                    if forward_type == 'g_layer_att':
-                        layer_outputs[0][:,1,:] = self.att_pool(layer_outputs[0][:,1,:], layer_outputs_star[0][:,1,:], i)
-                    elif forward_type == 'g_layer_replace':
-                        print('hi')
-                        layer_outputs[0][:,1,:] = layer_outputs_star[0][:,1,:]
-                    elif forward_type == 'sg_layer':
-                        layer_outputs[0][:,1,:] = self.att_pool(layer_outputs[0][:,1,:], layer_outputs_star[0][:,1,:], i)
-                        layer_outputs[0][:,0,:] = self.att_pool(layer_outputs[0][:,0,:], layer_outputs_star[0][:,0,:], i)
-                    elif forward_type == 'sg_layer_replace':
-                        layer_outputs[0][:,1,:] = layer_outputs_star[0][:,1,:]
-                        layer_outputs[0][:,0,:] = layer_outputs_star[0][:,0,:]
-                        
 
             hidden_states = layer_outputs[0]
             if use_cache:
@@ -2406,147 +1058,6 @@ class RobertaEncoder_gcls_star(nn.Module):
             attentions=all_self_attentions,
             cross_attentions=all_cross_attentions,
         )
-    
-class RobertaEncoder_gcls_auto(nn.Module):
-    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler):
-        super().__init__()
-        self.config = config
-        self.layer = nn.ModuleList([RobertaLayer_auto(config, VDC_auto = VDC_auto, VIC_auto = VIC_auto, 
-                                                      num_auto_layers = num_auto_layers, head_wise = head_wise,
-                                                      auto_VDC_k = auto_VDC_k, a_pooler = a_pooler) for _ in range(config.num_hidden_layers)])
-        self.gradient_checkpointing = False
-        
-        self.VDC_auto = VDC_auto
-        self.VIC_auto = VIC_auto
-        
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = False,
-        output_hidden_states: Optional[bool] = False,
-        return_dict: Optional[bool] = True,
-        VDC_info = None,
-        automation_visualization = None,
-        sg_output = False,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
-        
-        all_s_outputs = () if sg_output else None
-        all_g_outputs = () if sg_output else None
-
-        next_decoder_cache = () if use_cache else None
-        
-        auto_VDC_results = None
-        auto_VIC_results = None
-        for i, layer_module in enumerate(self.layer):
-            if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-                
-            if sg_output:
-                all_s_outputs = all_s_outputs + (hidden_states[:,0],)
-                all_g_outputs = all_g_outputs + (hidden_states[:,1],)
-
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-            past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if self.gradient_checkpointing and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                    )
-                    use_cache = False
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, past_key_value, output_attentions)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
-            else:
-                if self.VDC_auto == False:
-                    att_mask = attention_mask[i].clone()
-                else:
-                    att_mask = None
-                
-                gcls_update = False
-                layer_outputs, visualization_results = layer_module(
-                    hidden_states,
-                    att_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                    past_key_value,
-                    output_attentions,
-                    gcls_update = gcls_update,
-                    VDC_info = VDC_info,
-                    automation_visualization = automation_visualization,
-                )
-                
-            
-            if automation_visualization:
-                if self.VDC_auto:
-                    if i == 0:
-                        auto_VDC_results = visualization_results[0].unsqueeze(0)
-                    else:
-                        auto_VDC_results = torch.cat((auto_VDC_results, visualization_results[0].unsqueeze(0)), dim = 0)
-                if self.VIC_auto:
-                    if i == 0:
-                        auto_VIC_results = visualization_results[1].unsqueeze(0)
-                    else:
-                        auto_VIC_results = torch.cat((auto_VIC_results, visualization_results[1].unsqueeze(0)), dim = 0)
-            
-            hidden_states = layer_outputs[0]
-            if use_cache:
-                next_decoder_cache += (layer_outputs[-1],)
-            if output_attentions:
-                all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
-
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-            
-        if sg_output:
-            all_s_outputs = all_s_outputs + (hidden_states[:,0],)
-            all_g_outputs = all_g_outputs + (hidden_states[:,1],)
-
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        ), all_s_outputs, all_g_outputs, (auto_VDC_results, auto_VIC_results)
     
 
 # Copied from transformers.models.bert.modeling_bert.BertPooler
@@ -2637,19 +1148,22 @@ class RobertaPooler_gcls(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
         self.g_pooler = g_pooler
-        self.dense_2 = None
-        if g_pooler in ['s_g_t_max_concat', 's_g_t_avg_concat']:
-            self.dense_2 = nn.Linear(3*config.hidden_size, config.hidden_size)
-        elif g_pooler in ['s_g_concat']:
-            self.dense_2 = nn.Linear(2*config.hidden_size, config.hidden_size)
-        elif g_pooler in ['s_g_att', 's_g_t_avg']:
-            self.dense_2 = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dense_ec = nn.Linear(config.hidden_size, 1)
+        self.dense_concat = nn.Linear(2*config.hidden_size, config.hidden_size)
         
-        if self.dense_2 != None:
-            self.dense_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
-            if self.dense_2.bias is not None:
-                self.dense_2.bias.data.zero_()
+        # below might be useful for pb.
+#         if self.dense_2 != None:
+#             self.dense_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
+#             if self.dense_2.bias is not None:
+#                 self.dense_2.bias.data.zero_()
         
+    def ec_pool(self, vectors, layer):
+        scores = layer(vectors).view(-1, vectors.size(1))
+        probs = nn.functional.softmax(scores, dim=1)
+        final_output =  torch.matmul(probs.unsqueeze(1), vectors).view(-1, 768)
+        
+        return final_output
+    
     def forward(self, hidden_states: torch.Tensor, VDC_info=None) -> torch.Tensor:
         if self.g_pooler == 's':
             cat = hidden_states[:,0]
@@ -2672,11 +1186,12 @@ class RobertaPooler_gcls(nn.Module):
             pooled_output = self.dense(cat)
             final_output = self.activation(pooled_output)
             
+            
         elif self.g_pooler == 's_g_att':
+            
             first_second_token_tensor = hidden_states[:, :2]
             cat = torch.mean(first_second_token_tensor, dim=1)
 #             cat = torch.max(first_second_token_tensor, dim=1)[0]
-            
             pooled_output = self.dense(cat)
             pooled_output = self.activation(pooled_output)
 
@@ -2687,7 +1202,6 @@ class RobertaPooler_gcls(nn.Module):
             final_output = self.activation(final_output)
             
             
-
         elif self.g_pooler == 's_g_t_avg_att':
             index = VDC_info == 1
             index = index.long()
@@ -2705,6 +1219,17 @@ class RobertaPooler_gcls(nn.Module):
             final_output = torch.matmul(attention_probs.unsqueeze(1), sgt_vector).view(-1, 768)
             final_output = self.activation(final_output)
             
+        elif self.g_pooler == 's_g_ec':
+            index = VDC_info == 999 # g infront of X
+            index = index.long()
+            mask = index.unsqueeze(2)
+            g_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            full_vector = torch.cat((hidden_states[:,0].unsqueeze(1), g_vector.unsqueeze(1)),
+                                    dim=1)
+            
+            return self.ec_pool(full_vector, self.dense_ec)
+        
         elif self.g_pooler == 's_g_t_max_att':
             index = VDC_info == 1
             index = index.long()
@@ -2773,9 +1298,9 @@ class RobertaPooler_gcls(nn.Module):
             attention_scores = attention_scores.view(-1,2)
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-            
+
 #             final_output = self.activation(final_output)
-            
+
         elif self.g_pooler == 'g_t_avg':
             index = VDC_info == 1
             index = index.long()
@@ -2802,9 +1327,9 @@ class RobertaPooler_gcls(nn.Module):
             attention_scores = attention_scores.view(-1,2)
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-            
+
 #             final_output = self.dropout(final_output)
-            
+
         elif self.g_pooler == 's_t_att':
             index = VDC_info == 1
             index = index.long()
@@ -2825,6 +1350,17 @@ class RobertaPooler_gcls(nn.Module):
             first_second_token_tensor = hidden_states[:, :2].reshape(-1, 2*768)
             pooled_output = self.dense_2(first_second_token_tensor)
             final_output = self.activation(pooled_output)
+            
+        elif self.g_pooler == 's_g_concat_2':
+            index = VDC_info == 999  # g infront of X
+            index = index.long()
+            mask = index.unsqueeze(2)
+            g_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            full_vector = torch.cat((hidden_states[:,0], g_vector), dim = -1)
+            pooled_output = self.activation(self.dense_concat(full_vector))
+            final_output = self.activation(self.dense(pooled_output))
+            
         elif self.g_pooler == 's_g_t_avg_concat':  # concatanating s, g, and t_avg
             first_second_token_tensor = hidden_states[:, :2]
             
@@ -3009,33 +1545,6 @@ class RobertaPooler_gcls(nn.Module):
             
         return final_output
         
-class RobertaPooler_gcls_2(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.activation = nn.Tanh()
-
-    def forward(self, hidden_states: torch.Tensor, g_token_pos) -> torch.Tensor:
-        # We "pool" the model by simply taking the hidden state corresponding
-        # to the first token.
-        
-        gcls_tokens_tensor = hidden_states[:,:3]
-        cat = torch.mean(gcls_tokens_tensor, dim = 1)
-        
-        pooled_output = self.dense(cat)
-        final_output = self.activation(pooled_output)
-        
-#         first_second_token_tensor = hidden_states[:, :2]
-#         cat = torch.mean(first_second_token_tensor, dim=1)
-#         pooled_output = self.dense(cat)
-#         pooled_output = self.activation(pooled_output)
-        
-#         attention_scores = torch.matmul(pooled_output.unsqueeze(1), first_second_token_tensor.transpose(1,2))
-#         attention_scores = attention_scores.view(-1,2)
-#         attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-#         final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-        
-        return final_output
     
 class RobertaPreTrainedModel(PreTrainedModel):
     """
@@ -3494,164 +2003,6 @@ class RobertaModel_TD(RobertaPreTrainedModel):
 )
 
 
-class RobertaModel_TD_star(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, add_pooling_layer=False):
-        super().__init__(config)
-        self.config = config
-
-        self.embeddings = RobertaEmbeddings(config)
-        self.encoder = RobertaEncoder_star(config)
-
-        self.pooler = RobertaPooler_TD(config) if add_pooling_layer else None
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_input_embeddings(self):
-        return self.embeddings.word_embeddings
-
-    def set_input_embeddings(self, value):
-        self.embeddings.word_embeddings = value
-
-    def _prune_heads(self, heads_to_prune):
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
-        class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    # Copied from transformers.models.bert.modeling_bert.BertModel.forward
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        VDC_info = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
-        
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if self.config.is_decoder:
-            use_cache = use_cache if use_cache is not None else self.config.use_cache
-        else:
-            use_cache = False
-
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-        batch_size, seq_length = input_shape
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-
-        if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
-        
-        if token_type_ids is None:
-            if hasattr(self.embeddings, "token_type_ids"):
-                buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
-                token_type_ids = buffered_token_type_ids_expanded
-            else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-
-        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
-        # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
-        
-        # If a 2D or 3D attention mask is provided for the cross-attention
-        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-        if self.config.is_decoder and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
-            if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
-        else:
-            encoder_extended_attention_mask = None
-
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
-        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
-        embedding_output = self.embeddings(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            token_type_ids=token_type_ids,
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
-        )
-        encoder_outputs = self.encoder(
-            embedding_output,
-            attention_mask=extended_attention_mask,
-            head_mask=head_mask,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_extended_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            VDC_info = VDC_info,
-        )
-        sequence_output = encoder_outputs[0]
-        
-#         assert self.pooler == None
-        pooled_output = self.pooler(sequence_output, VDC_info = VDC_info) if self.pooler is not None else None
-
-        if not return_dict:
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        return BaseModelOutputWithPoolingAndCrossAttentions(
-            last_hidden_state=sequence_output,
-            pooler_output=pooled_output,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        )
-
-
-@add_start_docstrings(
-    """RoBERTa Model with a `language modeling` head on top for CLM fine-tuning.""", ROBERTA_START_DOCSTRING
-)
-
-
 class RobertaModel_gcls(RobertaPreTrainedModel):
     """
 
@@ -3722,6 +2073,10 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
         VDC_info = None,
+        DEP_info = None,
+        use_DEP = False,
+        detail = None,
+        input_for_detail = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -3795,19 +2150,6 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
         else:
             encoder_extended_attention_mask = None
         
-#         original_attention_mask = extended_attention_mask.clone()    # torch.Size([32, 1, 1, 128])
- 
-#         extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
-        
-#         extended_attention_mask_ = {}
-        
-#         for item in layer_L_set:
-#             extended_att_mask = extended_attention_mask.clone()
-#             for i in range(input_ids.size(0)):
-#                 extended_att_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-# #                 extended_att_mask[i,0,0,:2] = torch.tensor([0, -10000.0], dtype =torch.float)
-
-#             extended_attention_mask_[item] = extended_att_mask
         
             
         # Prepare head mask if needed
@@ -3837,6 +2179,10 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             VDC_info = VDC_info,
+            DEP_info = DEP_info,
+            use_DEP = use_DEP,
+            detail = detail,
+            input_for_detail = input_for_detail,
         )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output, VDC_info = VDC_info) if self.pooler is not None else None
@@ -3858,424 +2204,6 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
     """RoBERTa Model with a `language modeling` head on top for CLM fine-tuning.""", ROBERTA_START_DOCSTRING
 )
 
-class RobertaModel_gcls_star(RobertaPreTrainedModel):
-    """
-
-    The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
-    cross-attention is added between the self-attention layers, following the architecture described in *Attention is
-    all you need*_ by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
-    Kaiser and Illia Polosukhin.
-
-    To behave as an decoder the model needs to be initialized with the `is_decoder` argument of the configuration set
-    to `True`. To be used in a Seq2Seq model, the model needs to initialized with both `is_decoder` argument and
-    `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
-
-    .. _*Attention is all you need*: https://arxiv.org/abs/1706.03762
-
-    """
-
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, g_pooler, add_pooling_layer=True):
-        super().__init__(config)
-        self.config = config
-
-        self.embeddings = RobertaEmbeddings(config)
-        self.encoder = RobertaEncoder_gcls_star(config)
-        
-        self.pooler = RobertaPooler_gcls(config, g_pooler) if add_pooling_layer else None
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_input_embeddings(self):
-        return self.embeddings.word_embeddings
-
-    def set_input_embeddings(self, value):
-        self.embeddings.word_embeddings = value
-
-    def _prune_heads(self, heads_to_prune):
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
-        class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    # Copied from transformers.models.bert.modeling_bert.BertModel.forward
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        VDC_info = None,
-        forward_type = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
-        r"""
-        encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
-            the model is configured as a decoder.
-        encoder_attention_mask (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
-            the cross-attention if the model is configured as a decoder. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-        past_key_values (`tuple(tuple(torch.FloatTensor))` of length `config.n_layers` with each tuple having 4 tensors of shape `(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
-            Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
-
-            If `past_key_values` are used, the user can optionally input only the last `decoder_input_ids` (those that
-            don't have their past key value states given to this model) of shape `(batch_size, 1)` instead of all
-            `decoder_input_ids` of shape `(batch_size, sequence_length)`.
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if self.config.is_decoder:
-            use_cache = use_cache if use_cache is not None else self.config.use_cache
-        else:
-            use_cache = False
-
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-        batch_size, seq_length = input_shape
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-
-        if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
-
-        if token_type_ids is None:
-            if hasattr(self.embeddings, "token_type_ids"):
-                buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
-                token_type_ids = buffered_token_type_ids_expanded
-            else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-
-        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
-        # ourselves in which case we just need to make it broadcastable to all heads.
-#         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
-
-        # If a 2D or 3D attention mask is provided for the cross-attention
-        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-        if self.config.is_decoder and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
-            if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
-        else:
-            encoder_extended_attention_mask = None
-        
-#         original_attention_mask = extended_attention_mask.clone()    # torch.Size([32, 1, 1, 128])
- 
-#         extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
-        
-#         extended_attention_mask_ = {}
-        
-#         for item in layer_L_set:
-#             extended_att_mask = extended_attention_mask.clone()
-#             for i in range(input_ids.size(0)):
-#                 extended_att_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-# #                 extended_att_mask[i,0,0,:2] = torch.tensor([0, -10000.0], dtype =torch.float)
-
-#             extended_attention_mask_[item] = extended_att_mask
-        
-            
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
-        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
-        embedding_output = self.embeddings(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            token_type_ids=token_type_ids,
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
-            VDC_info = VDC_info,
-        )
-        encoder_outputs = self.encoder(
-            embedding_output,
-            attention_mask=extended_attention_mask,
-            head_mask=head_mask,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_extended_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            VDC_info = VDC_info,
-            forward_type = forward_type,
-        )
-        sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, VDC_info = VDC_info) if self.pooler is not None else None
-
-        if not return_dict:
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        return BaseModelOutputWithPoolingAndCrossAttentions(
-            last_hidden_state=sequence_output,
-            pooler_output=pooled_output,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        )
-
-
-@add_start_docstrings(
-    """RoBERTa Model with a `language modeling` head on top for CLM fine-tuning.""", ROBERTA_START_DOCSTRING
-)
-
-class RobertaModel_gcls_auto(RobertaPreTrainedModel):
-    """
-
-    The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
-    cross-attention is added between the self-attention layers, following the architecture described in *Attention is
-    all you need*_ by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
-    Kaiser and Illia Polosukhin.
-
-    To behave as an decoder the model needs to be initialized with the `is_decoder` argument of the configuration set
-    to `True`. To be used in a Seq2Seq model, the model needs to initialized with both `is_decoder` argument and
-    `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
-
-    .. _*Attention is all you need*: https://arxiv.org/abs/1706.03762
-
-    """
-
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler, g_pooler, add_pooling_layer=True):
-        super().__init__(config)
-        self.config = config
-
-        self.embeddings = RobertaEmbeddings(config)
-        self.encoder = RobertaEncoder_gcls_auto(config, VDC_auto = VDC_auto, VIC_auto = VIC_auto, 
-                                                num_auto_layers = num_auto_layers, head_wise = head_wise, 
-                                                auto_VDC_k = auto_VDC_k, a_pooler = a_pooler)
-        
-        self.pooler = RobertaPooler_gcls(config, g_pooler) if add_pooling_layer else None
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_input_embeddings(self):
-        return self.embeddings.word_embeddings
-
-    def set_input_embeddings(self, value):
-        self.embeddings.word_embeddings = value
-
-    def _prune_heads(self, heads_to_prune):
-        """
-        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
-        class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    # Copied from transformers.models.bert.modeling_bert.BertModel.forward
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        VDC_info = None,
-        automation_visualization = None,
-        sg_output = False,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
-        r"""
-        encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
-            the model is configured as a decoder.
-        encoder_attention_mask (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
-            the cross-attention if the model is configured as a decoder. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-        past_key_values (`tuple(tuple(torch.FloatTensor))` of length `config.n_layers` with each tuple having 4 tensors of shape `(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
-            Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
-
-            If `past_key_values` are used, the user can optionally input only the last `decoder_input_ids` (those that
-            don't have their past key value states given to this model) of shape `(batch_size, 1)` instead of all
-            `decoder_input_ids` of shape `(batch_size, sequence_length)`.
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        """
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if self.config.is_decoder:
-            use_cache = use_cache if use_cache is not None else self.config.use_cache
-        else:
-            use_cache = False
-
-        if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif input_ids is not None:
-            input_shape = input_ids.size()
-        elif inputs_embeds is not None:
-            input_shape = inputs_embeds.size()[:-1]
-        else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
-
-        batch_size, seq_length = input_shape
-        device = input_ids.device if input_ids is not None else inputs_embeds.device
-
-        # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
-
-        if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
-
-        if token_type_ids is None:
-            if hasattr(self.embeddings, "token_type_ids"):
-                buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
-                token_type_ids = buffered_token_type_ids_expanded
-            else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
-
-        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
-        # ourselves in which case we just need to make it broadcastable to all heads.
-#         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
-
-        # If a 2D or 3D attention mask is provided for the cross-attention
-        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-        if self.config.is_decoder and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
-            if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
-        else:
-            encoder_extended_attention_mask = None
-        
-#         original_attention_mask = extended_attention_mask.clone()    # torch.Size([32, 1, 1, 128])
- 
-#         extended_attention_mask = extended_attention_mask.repeat(1,1,input_ids.size(1),1)    # torch.Size([32, 1, 128, 128])
-        
-#         extended_attention_mask_ = {}
-        
-#         for item in layer_L_set:
-#             extended_att_mask = extended_attention_mask.clone()
-#             for i in range(input_ids.size(0)):
-#                 extended_att_mask[i, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
-# #                 extended_att_mask[i,0,0,:2] = torch.tensor([0, -10000.0], dtype =torch.float)
-
-#             extended_attention_mask_[item] = extended_att_mask
-        
-            
-        # Prepare head mask if needed
-        # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x n_heads x N x N
-        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
-        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
-        embedding_output = self.embeddings(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            token_type_ids=token_type_ids,
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
-        )
-        encoder_outputs, s_, g_, visualization_results = self.encoder(
-            embedding_output,
-            attention_mask=extended_attention_mask,
-            head_mask=head_mask,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_extended_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            VDC_info = VDC_info,
-            automation_visualization = automation_visualization,
-            sg_output = sg_output,
-        )
-        sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output, VDC_info = VDC_info) if self.pooler is not None else None
-
-        if not return_dict:
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        return BaseModelOutputWithPoolingAndCrossAttentions(
-            last_hidden_state=sequence_output,
-            pooler_output=pooled_output,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        ), s_, g_, visualization_results
-
-
-@add_start_docstrings(
-    """RoBERTa Model with a `language modeling` head on top for CLM fine-tuning.""", ROBERTA_START_DOCSTRING
-)
 
 class RobertaForCausalLM(RobertaPreTrainedModel):
     _keys_to_ignore_on_save = [r"lm_head.decoder.weight", r"lm_head.decoder.bias"]
@@ -4665,7 +2593,7 @@ class RobertaForSequenceClassification(RobertaPreTrainedModel):
 class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
-    def __init__(self, config, g_pooler):
+    def __init__(self, config, g_pooler, pb=None):
         super().__init__(config)
         config.num_labels = 3
         self.num_labels = config.num_labels
@@ -4675,6 +2603,7 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
         self.classifier = RobertaClassificationHead_gcls(config)
 
         # Initialize weights and apply final processing
+        torch.manual_seed(pb)
         self.post_init()
 
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
@@ -4700,6 +2629,9 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
         return_dict: Optional[bool] = None,
         extended_attention_mask = None,
         VDC_info = None,
+        DEP_info = None,
+        use_DEP = False,
+        detail = None,
     ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -4723,247 +2655,15 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
             return_dict=return_dict,
             extended_attention_mask = extended_attention_mask,
             VDC_info = VDC_info,
+            DEP_info = DEP_info,
+            use_DEP = use_DEP,
+            detail = detail,
+            input_for_detail = input_ids.clone(),
         )
         sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
         logits = self.classifier(sequence_output)
 
         loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-        
-#         if sg_output:
-#             sg_loss = ()
-#             loss_fct_2 = MSELoss()
-#             for l in range(12):
-#                 sg_loss = sg_loss + (loss_fct_2(s_outputs[l], g_outputs[l]), )
-                
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return sg_loss, SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-class RobertaForSequenceClassification_gcls_star(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config, g_pooler):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_gcls_star(config, add_pooling_layer=True, g_pooler = g_pooler)
-        self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        VDC_info = None,
-        forward_type = None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
-        sg_loss = None
-        
-        outputs = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            extended_attention_mask = extended_attention_mask,
-            VDC_info = VDC_info,
-            forward_type = forward_type,
-        )
-        sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
-        logits = self.classifier(sequence_output)
-
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-        
-#         if sg_output:
-#             sg_loss = ()
-#             loss_fct_2 = MSELoss()
-#             for l in range(12):
-#                 sg_loss = sg_loss + (loss_fct_2(s_outputs[l], g_outputs[l]), )
-                
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return sg_loss, SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-class RobertaForSequenceClassification_gcls_auto(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config, VDC_auto, VIC_auto, num_auto_layers, head_wise, auto_VDC_k, a_pooler, g_pooler):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_gcls_auto(config, add_pooling_layer=True, VDC_auto = VDC_auto, VIC_auto = VIC_auto,
-                                              num_auto_layers = num_auto_layers, head_wise = head_wise, auto_VDC_k = auto_VDC_k,
-                                              a_pooler = a_pooler, g_pooler = g_pooler)
-        self.classifier = RobertaClassificationHead_gcls(config)
-            
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        extended_attention_mask = None,
-        VDC_info = None,
-        automation_visualization = None,
-        sg_output = False,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs, s_outputs, g_outputs, visualization_result = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            extended_attention_mask = extended_attention_mask,
-            VDC_info = VDC_info,
-            automation_visualization = automation_visualization,
-            sg_output = sg_output,
-        )
-        
-        sequence_output = outputs[1]    # torch.tensor([32,768]), outputs[0].size() = torch.tensor([32,128,768])
-        logits = self.classifier(sequence_output)
-
-        loss = None
-        sg_loss = None
         if labels is not None:
             if self.config.problem_type is None:
                 if self.num_labels == 1:
@@ -4986,17 +2686,11 @@ class RobertaForSequenceClassification_gcls_auto(RobertaPreTrainedModel):
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(logits, labels)
                 
-        if sg_output:
-            sg_loss = ()
-            loss_fct_2 = MSELoss()
-            for l in range(12):
-                sg_loss = sg_loss + (loss_fct_2(s_outputs[l], g_outputs[l]), )
-
         if not return_dict:
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
-        return visualization_result, sg_loss, SequenceClassifierOutput(
+        return sg_loss, SequenceClassifierOutput(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
@@ -5130,111 +2824,6 @@ class RobertaForSequenceClassification_TD(RobertaPreTrainedModel):
 # #             target_in_sent_embed[i] = torch.cat((features[i][0], torch.max(target_embed, dim=0)[0]), -1)
             
 #         target_in_sent_embed = self.dropout(target_in_sent_embed)
-        
-        logits = self.classifier(features)
-        
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=None,
-            attentions=None,
-        )
-
-
-@add_start_docstrings(
-    """
-    Roberta Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    ROBERTA_START_DOCSTRING,
-)
-
-
-class RobertaForSequenceClassification_TD_t_star(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids"]
-
-    def __init__(self, config):
-        super().__init__(config)
-        config.num_labels = 3
-        self.num_labels = config.num_labels
-        self.config = config
-
-        self.roberta = RobertaModel_TD_t_star(config, add_pooling_layer=True)
-        self.classifier = RobertaClassificationHead_gcls(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
-    @add_code_sample_docstrings(
-        processor_class=_TOKENIZER_FOR_DOC,
-        checkpoint="cardiffnlp/twitter-roberta-base-emotion",
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'optimism'",
-        expected_loss=0.08,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        token_type_ids: Optional[torch.LongTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        VDC_info = None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
-        features = self.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            VDC_info = VDC_info,
-        )[1]
         
         logits = self.classifier(features)
         
