@@ -2604,7 +2604,7 @@ class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
         self.classifier = RobertaClassificationHead_gcls(config)
 
         # Initialize weights and apply final processing
-        torch.manual_seed(pb)
+#         torch.manual_seed(pb)
         self.post_init()
 
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
