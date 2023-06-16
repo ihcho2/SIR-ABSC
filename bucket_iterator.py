@@ -108,6 +108,18 @@ class BucketIterator(object):
                     text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
                 elif 'roberta' in self.model_name:
                     text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [2]
+                    
+            elif self.input_format == 'g_and_X':
+                text_indices_copy = text_indices.copy()
+                sent = 'and'
+                for item in aspect:
+                    sent += ' '
+                    sent += item
+                
+                if 'bert_' in self.model_name:
+                    text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                elif 'roberta' in self.model_name:
+                    text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [2]
                 
             elif self.input_format == 'g_infront_of_X_g_and_X':
                 text_indices_copy = text_indices.copy()
