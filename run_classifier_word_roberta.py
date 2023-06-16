@@ -308,6 +308,11 @@ class Instructor:
         if task_name == 'mams':
             print('# of validation_examples: ', len(self.dataset.validation_examples))
         
+        if args.task_name == 'restaurant':
+            eval_start_epoch = 4
+        elif args.task_name == 'laptop':
+            eval_start_epoch = -1
+        
         for i_epoch in range(int(args.num_train_epochs)):
             if i_epoch == 8:
                 if task_name == 'tweet' and self.max_test_acc_INC < 0.70:
@@ -600,7 +605,7 @@ class Instructor:
                     self.model.zero_grad()
                     self.global_step += 1
                     
-                if self.global_step % self.opt.log_step == 0 and i_epoch > -1:
+                if self.global_step % self.opt.log_step == 0 and i_epoch > eval_start_epoch:
                     print('lr: ', self.optimizer.param_groups[0]['lr'])
                     print('lr2: ', self.optimizer.param_groups[1]['lr'])
                     
