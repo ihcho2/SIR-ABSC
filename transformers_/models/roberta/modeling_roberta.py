@@ -436,6 +436,7 @@ class RobertaSelfAttention_gcls(nn.Module):
                 print('[1] target according to VDC_info: ', tokenizer.convert_ids_to_tokens(input_for_detail[0][x]))
                 
             if detail and layer_i in [0,4,8]:
+                detail_g = (VDC_info[0] == 999).nonzero(as_tuple=True)[0]
                 print('-'*77)
                 detail_vdc_tokens = (attention_mask[0,0,detail_g[0],:] == 0).nonzero(as_tuple=True)[0]
                 print(f'[2] tokens attended by [g] at layer {layer_i}:')
@@ -449,9 +450,9 @@ class RobertaSelfAttention_gcls(nn.Module):
     
             hidden_states_g = self.tanh(hidden_states + self.W1(dep_emb))
             
-            mixed_query_layer_g = self.query(hidden_states_g)
+            mixed_query_layer_g = self.query(hidden_states)
             mixed_key_layer_g = self.key(hidden_states_g)
-            mixed_value_layer_g = self.value(hidden_states_g)
+            mixed_value_layer_g = self.value(hidden_states)
             
             query_layer_g = self.transpose_for_scores(mixed_query_layer_g)
             key_layer_g = self.transpose_for_scores(mixed_key_layer_g)
@@ -941,7 +942,7 @@ class RobertaEncoder_gcls(nn.Module):
         self.config = config
         self.layer = nn.ModuleList([RobertaLayer_gcls(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
-        self.DEP = nn.Embedding(1000, 300, padding_idx = 99)
+        self.DEP = nn.Embedding(1000, 300, padding_idx = 0)
 
     def forward(
         self,
