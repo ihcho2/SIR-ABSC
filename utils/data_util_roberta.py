@@ -281,7 +281,7 @@ class ReadData:
         second_g_idx = []
         
         VDC_info = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99) 
-        DEP_info = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99) 
+        DEP_info = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 0) 
         POS_info = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99) 
         
         surface_VDC_info_token_level = torch.full([len(DGEDT_train_data), self.opt.max_seq_length], 99.0) 
@@ -502,9 +502,9 @@ class ReadData:
                     POS_info[i][1] = len(self.pos_vocab)+1
                     POS_info[i][second_g_idx[i]] = len(self.pos_vocab) + 2 # or len(self.pos_vocab) + 1
                     
-                    DEP_info[i][0] = len(self.dep_vocab)
-                    DEP_info[i][1] = self.dep_vocab['[g]']
-                    DEP_info[i][second_g_idx[i]] = len(self.dep_vocab) + 1 # or self.dep_vocab['[g]']
+                    DEP_info[i][0] = 0 # len(self.dep_vocab)
+                    DEP_info[i][1] = 0 # self.dep_vocab['[g]']
+                    DEP_info[i][second_g_idx[i]] = 0 # len(self.dep_vocab) + 1 # or self.dep_vocab['[g]']
                     
             
             for j in range(12):
