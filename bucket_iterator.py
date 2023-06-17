@@ -105,7 +105,7 @@ class BucketIterator(object):
                     sent += item
                 
                 if 'bert_' in self.model_name:
-                    text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                    text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [102]
                 elif 'roberta' in self.model_name:
                     text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [2]
                     
@@ -117,7 +117,7 @@ class BucketIterator(object):
                     sent += item
                 
                 if 'bert_' in self.model_name:
-                    text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                    text_indices = [101] + [30500] + text_indices_copy[1:] + [30500] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [102]
                 elif 'roberta' in self.model_name:
                     text_indices = [0] + [50249] + text_indices_copy[1:] + [2] + [50249] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [2]
                 
@@ -133,9 +133,9 @@ class BucketIterator(object):
                 x = tran_indices[span_indices[0][0]][0] + 1
                 
                 if 'bert_' in self.model_name:
-                    text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+[30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                    text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+[30500] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [102]
                 elif 'roberta' in self.model_name:
-                    text_indices = text_indices_copy[:x] + [50249] + text_indices_copy[x:]+ [2] + [50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+                    text_indices = text_indices_copy[:x] + [50249] + text_indices_copy[x:]+ [2] + [50249] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [2]
                     
             elif self.input_format == 'g_infront_of_X_gX':
                 text_indices_copy = text_indices.copy()
@@ -149,9 +149,9 @@ class BucketIterator(object):
                 x = tran_indices[span_indices[0][0]][0] + 1
                 
                 if 'bert_' in self.model_name:
-                    text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+[30500] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [102]
+                    text_indices = text_indices_copy[:x] + [30500] + text_indices_copy[x:]+[30500] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [102]
                 elif 'roberta' in self.model_name:
-                    text_indices = text_indices_copy[:x] + [50249] + text_indices_copy[x:]+[2]+[50249] + tokenizer.convert_tokens_to_ids(tokenizer.tokenize(sent)) + [2]
+                    text_indices = text_indices_copy[:x] + [50249] + text_indices_copy[x:]+[2]+[50249] + self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(sent)) + [2]
                     
             elif self.input_format == 'g_infront_of_X_g':
                 text_indices_copy = text_indices.copy()
