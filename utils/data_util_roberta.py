@@ -119,17 +119,31 @@ class ReadData:
         for key in self.dep_vocab.keys():
             self.dep2idx[self.dep_vocab[key]] = key     
             
-            
+        print('self.dep2idx: ', self.dep2idx)
         self.train_data_loader = BucketIterator(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True, input_format = self.opt.input_format, model_name = self.opt.model_name)
         self.test_data_loader = BucketIterator(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format, model_name = self.opt.model_name)
         if opt.task_name == 'mams':
             self.eval_data_loader = BucketIterator(data=absa_dataset.validation_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format, model_name = self.opt.model_name)
         
         self.DGEDT_train_data = self.train_data_loader.data
+        
+        
         self.DGEDT_train_batches = self.train_data_loader.batches
         
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
+        
+#         laptop_eval_text = []
+#         laptop_eval_aspect = []
+#         for i in range(len(self.DGEDT_test_data)):
+#             laptop_eval_text.append(self.DGEDT_test_data[i]['text'])
+#             laptop_eval_aspect.append(self.DGEDT_test_data[i]['aspect'])
+        
+#         with open('./analysis/laptop_eval_text.pkl', 'wb') as file:
+#             pickle.dump(laptop_eval_text, file)
+            
+#         with open('./analysis/laptop_eval_aspect.pkl', 'wb') as file:
+#             pickle.dump(laptop_eval_aspect, file)
         
         if opt.task_name == 'mams':
             self.DGEDT_validation_data = self.eval_data_loader.data
@@ -172,14 +186,10 @@ class ReadData:
             
     def create_new_global_dep(self):
         for dataset in ['lap14', 'rest14', 'twitter', 'mams']:
-            if self.opt.parser_info == 'spacy_sm_3.3.0' and 'bert_' in self.opt.model_name:
-                dataset_=pickle.load(open(dataset+'_datas_bert_spacy_sm_3.3.0.pkl', 'rb'))
-            elif self.opt.parser_info == 'spacy_sm_3.3.0' and 'roberta' in self.opt.model_name:
-                dataset_=pickle.load(open(dataset+'_datas_roberta_spacy_sm_3.3.0.pkl', 'rb'))
-            elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'bert_' in self.opt.model_name:
-                dataset_=pickle.load(open(dataset+'_datas_bert_spacy_lg_3.5.0.pkl', 'rb'))
-            elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'roberta' in self.opt.model_name:
-                dataset_=pickle.load(open(dataset+'_datas_roberta_spacy_lg_3.5.0.pkl', 'rb'))
+            if 'bert_' in self.opt.model_name:
+                dataset_ = pickle.load(open(dataset+'_datas_bert_' + self.opt.parser_info +'.pkl', 'rb'))
+            elif 'roberta' in self.opt.model_name:
+                dataset_ = pickle.load(open(dataset+'_datas_roberta_' + self.opt.parser_info +'.pkl', 'rb'))
                 
             train_data_loader = BucketIterator(data=dataset_.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True, input_format = self.opt.input_format, model_name = self.opt.model_name)
             
@@ -669,30 +679,46 @@ class ReadData:
                     new_VDC_k = [0,0,0,1,1,1,2,2,2,3,3,3]
                 elif hVDC[i] == 4:
                     new_VDC_k = [0,0,0,1,1,1,2,2,3,3,4,4]
+#                     new_VDC_k = [0,0,1,1,2,2,3,3,3,4,4,4]
                 elif hVDC[i] == 5:
                     new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,5]
                 elif hVDC[i] == 6:
                     new_VDC_k = [0,0,1,1,2,2,3,3,4,4,5,6]
+#                     new_VDC_k = [0,1,2,2,3,3,4,4,5,5,6,6]
                 elif hVDC[i] == 7:
                     new_VDC_k = [0,0,1,1,2,2,3,3,4,5,6,7]
+#                     new_VDC_k = [0,1,2,3,4,4,5,5,6,6,7,7]
                 elif hVDC[i] == 8:
                     new_VDC_k = [0,0,1,1,2,2,3,4,5,6,7,8]
+#                     new_VDC_k = [0,1,2,3,4,5,6,6,7,7,8,8]
                 elif hVDC[i] == 9:
                     new_VDC_k = [0,0,1,1,2,3,4,5,6,7,8,9]
+#                     new_VDC_k = [0,1,2,3,4,5,6,7,8,8,9,9]
                 elif hVDC[i] == 10:
                     new_VDC_k = [0,0,1,2,3,4,5,6,7,8,9,10]
+#                     new_VDC_k = [0,1,2,3,4,5,6,7,8,9,10,10]
                 elif hVDC[i] == 11:
                     new_VDC_k = [0,1,2,3,4,5,6,7,8,9,10,11]
                     
-                current_VDC[i][:] = torch.tensor(new_VDC_k[i], dtype = torch.float)
-                for j, item in enumerate(new_VDC_k):
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
+                if self.opt.do_auto == True:
+                    current_VDC[i][:] = torch.tensor([0,1,2,3,4,5,6,7,8,9,10,11], dtype = torch.float)
+                    for j, item in enumerate([0,1,2,3,4,5,6,7,8,9,10,11]):
+                        extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
+                else:
+                    current_VDC[i][:] = torch.tensor(new_VDC_k, dtype = torch.float)
+                    for j, item in enumerate(new_VDC_k):
+                        extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
                 
         elif self.opt.use_hVDC == False:
             for i in range(all_input_ids.size(0)):
-                current_VDC[i] = torch.tensor(self.opt.constant_vdc)
-                for j, item in enumerate(self.opt.constant_vdc):
-                    extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
+                if self.opt.do_auto == True:
+                    current_VDC[i][:] = torch.tensor([0,1,2,3,4,5,6,7,8,9,10,11], dtype = torch.float)
+                    for j, item in enumerate([0,1,2,3,4,5,6,7,8,9,10,11]):
+                        extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
+                else:
+                    current_VDC[i] = torch.tensor(self.opt.constant_vdc)
+                    for j, item in enumerate(self.opt.constant_vdc):
+                        extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
                         
         print('new_VDC_K statistics: ')
         max_k = max(hVDC)
