@@ -70,21 +70,13 @@ class ReadData:
         elif opt.task_name == 'mams':
             dgedt_dataset = 'mams'
             
-        if self.opt.parser_info == 'spacy_sm_3.3.0' and 'bert_' in self.opt.model_name:
-            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_bert_spacy_sm_3.3.0.pkl', 'rb'))
-            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_bert_spacy_sm_3.3.0.pkl', 'rb'))
+        if 'bert_' in self.opt.model_name:
+            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_bert_'+ self.opt.parser_info+ '.pkl', 'rb'))
+            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_bert_'+ self.opt.parser_info+ '.pkl', 'rb'))
+        elif 'roberta' in self.opt.model_name:
+            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta_'+ self.opt.parser_info+ '.pkl', 'rb'))
+            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_roberta_'+ self.opt.parser_info+ '.pkl', 'rb'))
             
-        elif self.opt.parser_info == 'spacy_sm_3.3.0' and 'roberta' in self.opt.model_name:
-            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_sm_3.3.0.pkl', 'rb'))
-            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_sm_3.3.0.pkl', 'rb'))
-            
-        elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'bert_' in self.opt.model_name:
-            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_bert_spacy_lg_3.5.0.pkl', 'rb'))
-            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_bert_spacy_lg_3.5.0.pkl', 'rb'))
-            
-        elif self.opt.parser_info == 'spacy_lg_3.5.0' and 'roberta' in self.opt.model_name:
-            absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_lg_3.5.0.pkl', 'rb'))
-            self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_roberta_spacy_lg_3.5.0.pkl', 'rb'))
             
         if 'spacy_sm' in self.opt.parser_info:
             self.nlp = spacy.load('en_core_web_sm')
