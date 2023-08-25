@@ -1152,6 +1152,17 @@ class RobertaPooler_gcls(nn.Module):
         self.dense_ec = nn.Linear(config.hidden_size, 1)
         self.dense_concat = nn.Linear(2*config.hidden_size, config.hidden_size)
         
+        if self.g_pooler in ['s_g_t_avg_avg_var_1', 'g_t_avg_avg_var_1']:
+            self.dense_2 = nn.Linear(config.hidden_size, config.hidden_size)
+            
+        elif self.g_pooler in ['s_g_new']:
+            self.g0 = nn.Parameter(torch.FloatTensor(1, 768))
+            self.g0.data.uniform_(-1, 1)
+            
+        elif self.g_pooler in ['s_g_new_2']:
+            self.g0 = nn.Linear(2*config.hidden_size, config.hidden_size)
+            self.g0.data.uniform_(-1, 1)
+            
         # below might be useful for pb.
 #         if self.dense_2 != None:
 #             self.dense_2.weight.data.normal_(mean=0.0, std=config.initializer_range)
@@ -1200,8 +1211,30 @@ class RobertaPooler_gcls(nn.Module):
             attention_scores = attention_scores.view(-1,2)
             attention_probs = nn.functional.softmax(attention_scores, dim=-1)
             final_output = torch.matmul(attention_probs.unsqueeze(1), first_second_token_tensor).view(-1, 768)
-            final_output = self.activation(final_output)
+            final_output = final_output
             
+        elif self.g_pooler == 's_g_new':
+            final_output = self.g0.data[0,:]*hidden_states[:,0] + (1-self.g0.data[0,:])*hidden_states[:,1]
+            
+        elif self.g_pooler == 's_g_new_2':
+            gg = self.g0(hidden_states[:, :2].reshape(-1, 2*768))
+            final_output = gg*hidden_states[:,0] + (1-gg)*hidden_states[:,1]
+            
+        elif self.g_pooler == 'g_t_avg_avg_var_1':
+            index = VDC_info == 0
+            index = index.long()
+            mask = index.unsqueeze(2)
+            t_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            index = VDC_info == 999 # g infront of X
+            index = index.long()
+            mask = index.unsqueeze(2)
+            g_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+            
+            pooled_output = self.activation((1/2)*self.dense_2(g_vector)+
+                                            (1/2)*self.dense(t_vector))
+            
+            return pooled_output
             
         elif self.g_pooler == 's_g_t_avg_att':
             index = VDC_info == 1
