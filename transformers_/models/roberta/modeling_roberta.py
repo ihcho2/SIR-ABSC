@@ -374,8 +374,14 @@ class RobertaSelfAttention_gcls(nn.Module):
         
         self.tanh = nn.Tanh()
         self.W1 = nn.Linear(300, config.hidden_size)
-        self.centroid = nn.Linear(config.hidden_size, 1)
+        self.centroid = nn.Linear(config.hidden_size, config.hidden_size)
         self.att_pool_dense = nn.Linear(config.hidden_size, config.hidden_size)
+        
+#         self.g0 = nn.Parameter(torch.FloatTensor(1, 768))
+#         self.g0.data.uniform_(-1, 1)
+        
+        self.g0 = nn.Linear(2*config.hidden_size, config.hidden_size)
+        self.g0.weight.data.uniform_(-1, 1)
         ######## 
         
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
@@ -447,7 +453,6 @@ class RobertaSelfAttention_gcls(nn.Module):
 #             dep_emb = POS(POS_info)
 #             dep_emb = DEP(VDC_info)
                 
-    
             hidden_states_g = self.tanh(hidden_states + self.W1(dep_emb))
             
             mixed_query_layer_g = self.query(hidden_states)
@@ -472,7 +477,10 @@ class RobertaSelfAttention_gcls(nn.Module):
             
             zz = (VDC_info == 999).nonzero(as_tuple=True)[1]
             
-            context_layer[range(hidden_states.size(0)),zz] = context_layer_g[range(hidden_states.size(0)), zz]
+#             context_layer[range(hidden_states.size(0)),zz] = self.g0.data[0,:]*context_layer_g[range(hidden_states.size(0)), zz] + (1-self.g0.data[0,:]) * context_layer[range(hidden_states.size(0)),zz] 
+            
+            gg = self.g0(hidden_states[:, :2].reshape(-1, 2*768))
+            context_layer[range(hidden_states.size(0)),zz] = gg*context_layer_g[range(hidden_states.size(0)), zz] + (1-gg) * context_layer[range(hidden_states.size(0)),zz]
             
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
