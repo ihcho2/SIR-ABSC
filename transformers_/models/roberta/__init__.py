@@ -58,7 +58,6 @@ else:
         "RobertaForSequenceClassification_TD_t_star",
         "RobertaForSequenceClassification_gcls",
         "RobertaForSequenceClassification_gcls_star",
-        "RobertaForSequenceClassification_gcls_auto",
         "RobertaForTokenClassification",
         "RobertaModel",
         "RobertaPreTrainedModel",
@@ -70,6 +69,10 @@ else:
     
     _import_structure["modeling_roberta_m1"] = [
         "RobertaForSequenceClassification_gcls_m1"
+    ]
+    
+    _import_structure["modeling_roberta_auto"] = [
+        "RobertaForSequenceClassification_gcls_auto"
     ]
     
     _import_structure["modeling_roberta_FFN"] = [
