@@ -1161,7 +1161,11 @@ class RobertaPooler_gcls(nn.Module):
             
         elif self.g_pooler in ['s_g_new_2']:
             self.g0 = nn.Linear(2*config.hidden_size, config.hidden_size)
-            self.g0.data.uniform_(-1, 1)
+            self.g0.weight.data.uniform_(-1, 1)
+            
+        elif self.g_pooler in ['s_g_new_3']:
+            self.g0 = nn.Linear(config.hidden_size, config.hidden_size)
+            self.g0.weight.data.uniform_(-1, 1)
             
         # below might be useful for pb.
 #         if self.dense_2 != None:
@@ -1218,6 +1222,10 @@ class RobertaPooler_gcls(nn.Module):
             
         elif self.g_pooler == 's_g_new_2':
             gg = self.g0(hidden_states[:, :2].reshape(-1, 2*768))
+            final_output = gg*hidden_states[:,0] + (1-gg)*hidden_states[:,1]
+            
+        elif self.g_pooler == 's_g_new_3':
+            gg = self.g0(torch.mean(hidden_states[:, :2], dim = 1)) 
             final_output = gg*hidden_states[:,0] + (1-gg)*hidden_states[:,1]
             
         elif self.g_pooler == 'g_t_avg_avg_var_1':
