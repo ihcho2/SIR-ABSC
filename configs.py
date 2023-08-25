@@ -24,7 +24,7 @@ def get_config_2():
                         required=True,
                         help="The input format of the data.")
     parser.add_argument("--bert_config_file",
-                        default=None,
+                        default=None, # /home/ikhyuncho23/GoBERTa/uncased_L-12_H-768_A-12/bert_config.json
                         type=str,
                         required=False,
                         help="The config json file corresponding to the pre-trained BERT model. \n"
@@ -41,7 +41,7 @@ def get_config_2():
                         required=True,
                         help="The name of the task to train.")
     parser.add_argument("--vocab_file",
-                        default='/home/ikhyuncho23/GoBERTa/roberta_files/vocab.json',
+                        default='/home/ikhyuncho23/GoBERTa/roberta_files/vocab.json', # For BERT: /home/ikhyuncho23/GoBERTa/uncased_L-12_H-768_A-12/vocab.txt
                         type=str,
                         required=False,
                         help="The vocabulary file that the BERT model was trained on.")
@@ -65,6 +65,10 @@ def get_config_2():
                         help="The maximum total input sequence length after WordPiece tokenization. \n"
                              "Sequences longer than this will be truncated, and sequences shorter \n"
                              "than this will be padded.")
+    parser.add_argument("--eval_start_epoch",
+                        default=0,
+                        type=int,
+                        help="When to start evaluation. Used for saving training time.")
     parser.add_argument("--do_train",
                         default=True,
                         help="Whether to run training.")
@@ -168,10 +172,22 @@ def get_config_2():
     parser.add_argument('--use_POS',
                         type= boolean_string, default = False)
     
+    parser.add_argument('--do_auto',
+                        type= boolean_string, default = False)
+    
     parser.add_argument('--constant_vdc',
                         type=lambda s: [int(item) for item in s.split(',')],
                         default = None,
                         help='VDC configuration for each layer.')
+    
+    parser.add_argument('--auto_layers',
+                        type=lambda s: [int(item) for item in s.split(',')],
+                        default = None,
+                        help='VDC configuration for each layer.')
+    
+    parser.add_argument('--temperature', type=float, default=0.1, help='temperature.')
+    
+    parser.add_argument('--auto_type', type=str, default=None, help='auto_type')
     
     parser.add_argument('--g_config',
                         type=lambda s: [int(item) for item in s.split(',')],
