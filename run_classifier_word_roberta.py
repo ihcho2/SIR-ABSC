@@ -204,6 +204,11 @@ class Instructor:
         self.model.roberta.embeddings.word_embeddings.weight.data[50249] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
         
         self.model.roberta.embeddings.word_embeddings.weight.data[50250] = self.model.roberta.embeddings.word_embeddings.weight.data[0]
+#         print('uniform initialization on [s]')
+#         print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[50249]))
+#         self.model.roberta.embeddings.word_embeddings.weight.data[50249].uniform_(-1, 1)
+#         self.model.roberta.embeddings.word_embeddings.weight.data[50250].uniform_(-1, 1)
+#         print(torch.sum(self.model.roberta.embeddings.word_embeddings.weight.data[50249]))
         
         if init_model_state_dict !=None:
             self.model.load_state_dict(init_model_state_dict)
@@ -452,17 +457,20 @@ class Instructor:
                         
                         print()
                         print('='*77)
-                        print(f'Code examination from run.py and using Parser on the fly, global_step: {self.global_step}')
-                        print()
-                        print('* 1. text')
                         print('-'*77)
+                        print('input_ids[0][:50]: ')
+                        print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
+                        print(f'Code examination from run.py and using Parser on the fly, global_step: {self.global_step}')
+#                         print()
+#                         print('* 1. text')
+#                         print('-'*77)
                         words = self.dataset.DGEDT_train_data[all_input_guids[0]]['text']
 #                         text = ' '.join(self.dataset.DGEDT_train_data[all_input_guids[0]]['text'])
                         text_left = [s.lower().strip() for s in self.lines[3*all_input_guids[0]].split("$T$")]
                         aspect = self.lines[3*all_input_guids[0] + 1].lower().strip()
                         text = concat(text_left, aspect, self.dataset.nlp).strip()
                         document = self.dataset.nlp(text)
-                        print(text)
+#                         print(text)
                         
 #                         print('VDC_info[0]: ', train_VDC_info[0])
 #                         print('DEP_info[0]: ', train_DEP_info[0])
@@ -542,6 +550,8 @@ class Instructor:
                                 else:
                                     A = 1
                             elif 'g' in args.input_format:
+                                A = 2
+                            elif args.input_format == 'X':
                                 A = 2
                             elif 'TD' in args.input_format:
                                 A = 1
