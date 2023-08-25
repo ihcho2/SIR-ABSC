@@ -6,12 +6,15 @@ from __future__ import print_function
 
 import math
 import sys
+import re 
 
 import csv
 import os
 import logging
 import random
 from tqdm import tqdm, trange
+import pickle
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -29,13 +32,16 @@ from sklearn.metrics import f1_score
 
 import time
 from data_utils_roberta import *
-from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD
+from transformers_ import BertTokenizer, RobertaTokenizer, RobertaConfig, RobertaModel, RobertaForSequenceClassification, RobertaForSequenceClassification_gcls, RobertaForSequenceClassification_TD, RobertaForSequenceClassification_gcls_auto
 
 from torch.distributions.bernoulli import Bernoulli
 
 from torch.optim.lr_scheduler import LambdaLR
 
 import torch.nn.functional as F
+
+from IPython.display import HTML as html_print
+from IPython.display import display
 
 # tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
@@ -80,7 +86,48 @@ def set_optimizer_params_grad(named_params_optimizer, named_params_model, test_n
         param_opti.grad.data.copy_(param_model.grad.data)
     return is_nan
 
+def cstr(s, color='black'):
+    return "<text style=color:{}>{}</text>".format(color, s)
 
+def print_color(t):
+    display(html_print(' '.join([cstr(ti, color=ci) for ti,ci in t])))
+    
+def display_VDC(document, VDC):
+    final_text = []
+    VDC_colors = ['red', 'magenta', 'orange', 'yellow', 'blue', 'green',
+                  'black', 'black', 'black', 'black', 'black', 'black']
+    
+    for token in document:
+        for j in range(12):
+            if token.i in VDC[j]:
+                final_text.append((str(token), VDC_colors[j]))
+                break
+                
+    return final_text
+
+def concat(texts,aspect,nlp):
+    source=''
+    splitnum=0
+
+    for i,text in enumerate(texts):
+        source+=text
+        splitnum+=len(tokenize(text, nlp))
+        if i <len(texts)-1:
+            source+=' '+aspect+' '
+            splitnum+=len(tokenize(aspect, nlp))
+
+    if splitnum!=len(tokenize(source.strip(), nlp)):
+        print('ERROR')
+
+    return re.sub(r' {2,}',' ',source.strip())
+
+def tokenize(text, nlp):
+        text=text.strip()
+        text=re.sub(r' {2,}',' ',text)
+        document = nlp(text)
+
+        return [token.text for token in document]
+    
 class Instructor:
     def __init__(self, args, init_model_state_dict = None):
         self.opt = args
@@ -110,19 +157,23 @@ class Instructor:
             self.validation_tran_indices = self.dataset.validation_tran_indices
             self.validation_span_indices = self.dataset.validation_span_indices
         
-        if args.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 'roberta_gcls_vdc_auto',
+        if args.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 'roberta_gcls_auto',
                                'roberta_gcls_m1']:
             self.train_extended_attention_mask = self.dataset.train_extended_attention_mask.to(args.device)
             self.eval_extended_attention_mask = self.dataset.eval_extended_attention_mask.to(args.device)
             self.train_VDC_info = self.dataset.train_VDC_info.to(args.device)
             self.train_DEP_info = self.dataset.train_DEP_info.to(args.device)
+            self.train_POS_info = self.dataset.train_POS_info.to(args.device)
+            
             self.eval_VDC_info = self.dataset.eval_VDC_info.to(args.device)
             self.eval_DEP_info = self.dataset.eval_DEP_info.to(args.device)
+            self.eval_POS_info = self.dataset.eval_POS_info.to(args.device)
             
             if task_name == 'mams':
                 self.validation_extended_attention_mask = self.dataset.validation_extended_attention_mask.to(args.device)
                 self.validation_VDC_info = self.dataset.validation_VDC_info.to(args.device)
                 self.validation_DEP_info = self.dataset.validation_DEP_info.to(args.device)
+                self.validation_POS_info = self.dataset.validation_POS_info.to(args.device)
             
                 
         if args.model_name in ['roberta_lcf', 'roberta_lcf_td']:
@@ -143,6 +194,9 @@ class Instructor:
             self.model = RobertaForSequenceClassification_TD.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_gcls:
             self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base', g_pooler = args.g_pooler,
+                                                                               pb = args.pb)
+        elif args.model_class == RobertaForSequenceClassification_gcls_auto:
+            self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base', g_pooler = args.g_pooler,
                                                                                pb = args.pb)
         else:
             self.model = model_classes[args.model_name](bert_config, args)
@@ -242,7 +296,7 @@ class Instructor:
                                       t_total=self.num_train_steps)
             
         elif args.model_name in ['roberta', 'roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
-                                 'roberta_gcls_vdc_auto', 'roberta_gcls_m1']:
+                                 'roberta_gcls_auto', 'roberta_gcls_m1']:
             
             optimizer_grouped_parameters = [
                 {'params': [p for n, p in self.param_optimizer if n not in no_decay],
@@ -280,6 +334,12 @@ class Instructor:
         self.test_acc_each_epoch = []
         self.test_f1_each_epoch = []
         
+        if task_name == 'restaurant':
+            fin = open('./datasets/semeval14/restaurants/restaurant_train.raw', 'r', encoding='utf-8', newline='\n', 
+                       errors='ignore')
+            self.lines = fin.readlines()
+            fin.close()
+        
         
     ###############################################################################################
     ###############################################################################################
@@ -308,10 +368,6 @@ class Instructor:
         if task_name == 'mams':
             print('# of validation_examples: ', len(self.dataset.validation_examples))
         
-        if args.task_name == 'restaurant':
-            eval_start_epoch = 4
-        elif args.task_name == 'laptop':
-            eval_start_epoch = -1
         
         for i_epoch in range(int(args.num_train_epochs)):
             if i_epoch == 8:
@@ -346,7 +402,7 @@ class Instructor:
                 self.test_acc_each_epoch.append(self.last_test_acc)
                 self.test_f1_each_epoch.append(self.last_test_f1)
                 
-            for step, batch in enumerate(tqdm(self.dataset.train_dataloader, desc="Training")):
+            for step, batch in enumerate(tqdm(self.dataset.train_dataloader, desc=f"Training (epoch: {i_epoch})")):
                 # batch = tuple(t.to(self.opt.device) for t in batch)
                 
                 if step % 100 == 0:
@@ -366,17 +422,20 @@ class Instructor:
                     input_ids_lcf_global = input_ids_lcf_global.to(self.opt.device)
                     input_ids_lcf_local = input_ids_lcf_local.to(self.opt.device)
                 elif self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
-                                             'roberta_gcls_vdc_auto']:
+                                             'roberta_gcls_auto']:
                     input_ids = input_ids.to(self.opt.device)
 #                     train_extended_attention_mask = list(self.train_extended_attention_mask[all_input_guids].transpose(0,1))
                     train_extended_attention_mask = self.train_extended_attention_mask[all_input_guids].transpose(0,1)
                     train_VDC_info = self.train_VDC_info[all_input_guids]
                     train_DEP_info = self.train_DEP_info[all_input_guids]
+                    train_POS_info = self.train_POS_info[all_input_guids]
+                    
                 elif self.opt.model_name in ['roberta_gcls_m1']:
                     input_ids = input_ids.to(self.opt.device)
                     train_extended_attention_mask = self.train_extended_attention_mask[all_input_guids].transpose(0,1)
                     train_VDC_info = self.train_VDC_info[all_input_guids]
                     train_DEP_info = self.train_DEP_info[all_input_guids]
+                    train_POS_info = self.train_POS_info[all_input_guids]
                 
                 elif self.opt.model_name in ['roberta']:
                     input_ids = input_ids.to(self.opt.device)
@@ -386,31 +445,36 @@ class Instructor:
                     input_mask = input_mask.to(self.opt.device)
                     
                 label_ids = label_ids.to(self.opt.device)
-                                        
-                
+                                    
                 if self.global_step % 50 == 0:
                     detail = True
-                    if self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_m1']:
+                    if self.opt.model_name in ['roberta_td', 'roberta_gcls', 'roberta_gcls_auto']:
                         
-                        print('VDC_info[0]: ', train_VDC_info[0])
-                        print('DEP_info[0]: ', train_DEP_info[0])
                         print()
                         print('='*77)
-                        print('Code examination from run.py and using Parser on the fly')
+                        print(f'Code examination from run.py and using Parser on the fly, global_step: {self.global_step}')
                         print()
                         print('* 1. text')
                         print('-'*77)
                         words = self.dataset.DGEDT_train_data[all_input_guids[0]]['text']
-                        text = ' '.join(self.dataset.DGEDT_train_data[all_input_guids[0]]['text'])
+#                         text = ' '.join(self.dataset.DGEDT_train_data[all_input_guids[0]]['text'])
+                        text_left = [s.lower().strip() for s in self.lines[3*all_input_guids[0]].split("$T$")]
+                        aspect = self.lines[3*all_input_guids[0] + 1].lower().strip()
+                        text = concat(text_left, aspect, self.dataset.nlp).strip()
                         document = self.dataset.nlp(text)
                         print(text)
+                        
+#                         print('VDC_info[0]: ', train_VDC_info[0])
+#                         print('DEP_info[0]: ', train_DEP_info[0])
+#                         print('POS_info[0]: ', train_POS_info[0])
                         
                         span_indices = self.train_span_indices[all_input_guids[0]]
                         tran_indices = self.train_tran_indices[all_input_guids[0]]
                         
                         document_words = [token for token in document]
+                        assert len(document_words) == len(self.dataset.DGEDT_train_data[all_input_guids[0]]['dependency_graph'][0])
                         target_i = list(range(span_indices[0][0], span_indices[0][1]))
-                        VDC = {} # token.i 기준으로 저장할 것.
+                        VDC = {} # token.i 기준으로 저장할 것. i.e., word-level.
                         last_used = [] # Just for assertion.
 
                         VDC[0] = target_i.copy()
@@ -443,43 +507,32 @@ class Instructor:
                             last_used = last_used_
                             VDC[l] = sorted(VDC[l])
 
-                        # VDC로 이제 attended token 만들고 tokenzier로 최종하면 딱 맞을 듯?
                         VDC_l_tokens = []
                         for i in range(len(VDC)):
-                            VDC_words = [token.text for token in document_words if token.i in VDC[i]]
+#                             VDC_words = [token.text for token in document_words if token.i in VDC[i]]
+                            VDC_words = [token for token in document_words if token.i in VDC[i]]
                             VDC_tokens = []
-                            for word in VDC_words:
-                                VDC_tokens += tokenizer.tokenize(word)
+                            for jj, word in enumerate(VDC_words):
+                                if word.i == 0:
+                                    VDC_tokens += tokenizer.tokenize(word.text)
+                                else:
+                                    VDC_tokens += tokenizer.tokenize(' ' + word.text)
 
                             VDC_l_tokens.append(VDC_tokens)
-
                         
-                        print('-'*77)
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][:100]))
-                        print('guid: ', all_input_guids[0])
-                        x = (train_VDC_info[0] == 0).nonzero(as_tuple=True)[0]
-                        print('train_VDC_info[0] target: ', tokenizer.convert_ids_to_tokens(input_ids[0][x]))
                         
                         curr_vdc = self.dataset.train_current_VDC[all_input_guids[0]]
-                        
                         zz = (train_VDC_info[0] == 999).nonzero(as_tuple=True)[0]
-                        
-                        print(f'train_extended_attention_mask layer 0, vdc={int(curr_vdc[0])}')
-                        x = (train_extended_attention_mask[0][0][0][zz[0]] == 0).nonzero(as_tuple=True)[0]
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                        print(VDC_l_tokens[int(curr_vdc[0])])
-                        print('-'*77)
-                        print(f'train_extended_attention_mask layer 4, vdc={int(curr_vdc[4])}')
-                        x = (train_extended_attention_mask[4][0][0][zz[0]] == 0).nonzero(as_tuple=True)[0]
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                        print(VDC_l_tokens[int(curr_vdc[4])])
-                        print('-'*77)
-                        print(f'train_extended_attention_mask layer 8, vdc={int(curr_vdc[8])}')
-                        x = (train_extended_attention_mask[8][0][0][zz[0]] == 0).nonzero(as_tuple=True)[0]
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][x]))
-                        print(VDC_l_tokens[int(curr_vdc[8])])
+                        print('curr_vdc: ', curr_vdc)
+                        for jj in range(12):
+                            x = (train_extended_attention_mask[jj][0][0][zz[0]] == 0).nonzero(as_tuple=True)[0]
+                            tokens_from_gcls = tokenizer.convert_ids_to_tokens(input_ids[0][x])
+                            assert VDC_l_tokens[int(curr_vdc[jj])] == list(tokens_from_gcls[2:])
+                            
+                        display_text = display_VDC(document, VDC = VDC)
                         
                         
+                        word_token_idx_pos_dep = []
                         for i, token in enumerate(document):
                             if i == 20:
                                 break
@@ -494,17 +547,37 @@ class Instructor:
                                 A = 1
                             if i >= span_indices[0][0] and 'g_infront' in args.input_format:
                                 A = 2
-
+                            
+                            word_token_idx_pos_dep.append({'word': token.text, 
+                                                       'token_idx': range(tran_indices[i][0], tran_indices[i][1]),
+                                                       'dep': self.dataset.idx2dep[int(train_DEP_info[0][tran_indices[i]
+                                                                                                          [0]+A])],
+                                                       'pos': self.dataset.pos_vocab[int(train_POS_info[0][tran_indices[i][0]
+                                                                                                            +A])]})
                             for xx in range(tran_indices[i][0], tran_indices[i][1]):
-                                print(f'{i}-th token: {token.text} ({self.dataset.dep2idx[int(train_DEP_info[0][xx+A])]})')
+                                assert self.dataset.idx2dep[int(train_DEP_info[0][xx+A])] == self.dataset.idx2dep[int(train_DEP_info[0][tran_indices[i][0]+A])]
+                                assert self.dataset.pos_vocab[int(train_POS_info[0][xx+A])] == self.dataset.pos_vocab[int(train_POS_info[0][tran_indices[i][0]+A])]
+#                                 print(f'{i}-th token: {token.text} ({self.dataset.idx2dep[int(train_DEP_info[0][xx+A])]})')
                         
                         
+                        #### save results for checking.
+                        analysis_results = {}
+                        analysis_results['text'] = text
+                        analysis_results['VDC'] = VDC
+                        analysis_results['display_text'] = display_text
+                        analysis_results['idx2dep'] = self.dataset.idx2dep
+                        analysis_results['pos_vocab'] = self.dataset.pos_vocab
+                        analysis_results['word_token_idx_pos_dep'] = word_token_idx_pos_dep
                         
-                    elif self.opt.model_name in ['roberta']:
-                        print('-'*77)
-                        print('input_ids[0][:50]: ')
-                        print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
-                        print('label_ids[0]: ', label_ids[0])
+                        Path(f'./analysis').mkdir(parents=True, exist_ok=True)
+                        with open(f'./analysis/seed_{args.seed}_global_step_{self.global_step}.pkl', 'wb') as file:
+                            pickle.dump(analysis_results, file)
+                        
+#                     elif self.opt.model_name in ['roberta']:
+#                         print('-'*77)
+#                         print('input_ids[0][:50]: ')
+#                         print(tokenizer.convert_ids_to_tokens(input_ids[0][:50]))
+#                         print('label_ids[0]: ', label_ids[0])
                         
                 else:
                     detail = False
@@ -520,6 +593,15 @@ class Instructor:
                                                   extended_attention_mask = train_extended_attention_mask, 
                                                   VDC_info = train_VDC_info, DEP_info = train_DEP_info,
                                                   use_DEP = args.use_DEP, detail = detail)[:2]
+                    loss, logits = output_[:2]
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
+                    sg_loss, _,_, output_ = self.model(input_ids, labels = label_ids,
+                                                  extended_attention_mask = train_extended_attention_mask, 
+                                                  VDC_info = train_VDC_info, DEP_info = train_DEP_info,
+                                                  use_DEP = args.use_DEP, detail = detail,
+                                                  auto_layers = args.auto_layers, do_auto = args.do_auto,
+                                                  temperature = args.temperature, auto_type = args.auto_type)[:4]
                     loss, logits = output_[:2]
                     
                 else:
@@ -605,14 +687,14 @@ class Instructor:
                     self.model.zero_grad()
                     self.global_step += 1
                     
-                if self.global_step % self.opt.log_step == 0 and i_epoch > eval_start_epoch:
+                if self.global_step % self.opt.log_step == 0 and i_epoch > args.eval_start_epoch:
                     print('lr: ', self.optimizer.param_groups[0]['lr'])
                     print('lr2: ', self.optimizer.param_groups[1]['lr'])
                     
                     train_accuracy_ = train_accuracy / nb_tr_examples
                     train_f1 = f1_score(y_true, y_pred, average='macro', labels=np.unique(y_true))
                     if task_name == 'mams':
-                        result, validation_increased = self.do_eval('validation')
+                        result, validation_increased = self.do_eval('validation', i_epoch = i_epoch)
                         if validation_increased:
                             self.latest_increase_epoch = i_epoch
 #                         if validation_increased:
@@ -628,7 +710,7 @@ class Instructor:
 #                             self.last_test_f1 = test_result['eval_f1']
 #                             self.last_test_epoch = i_epoch
                     else:
-                        result, validation_increased = self.do_eval()
+                        result, validation_increased = self.do_eval(i_epoch = i_epoch)
                         if validation_increased:
                             self.latest_increase_epoch = i_epoch
                                 
@@ -661,7 +743,7 @@ class Instructor:
                     
                         
                         
-    def do_eval(self, data_type = None):  
+    def do_eval(self, data_type = None, i_epoch = None):  
         ss = False
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
@@ -669,6 +751,8 @@ class Instructor:
         # confidence = []
         y_pred = []
         y_true = []
+        auto_vdc_att_scores = None
+        auto_vdc_att_scores_tok = None
         
         if data_type == 'validation':
             d_loader = self.dataset.validation_dataloader
@@ -676,12 +760,12 @@ class Instructor:
             d_loader = self.dataset.eval_dataloader
             
         eval_vdc = None
-        for batch in tqdm(d_loader, desc="Evaluating"):
+        for batch in tqdm(d_loader, desc=f"Evaluating (epoch {i_epoch})"):
             # batch = tuple(t.to(self.opt.device) for t in batch)
             input_ids, label_ids, all_input_guids = batch
                 
             if self.opt.model_name in ['roberta_td', 'roberta_td_t_star', 'roberta_gcls', 'roberta_gcls_ffn', 
-                                       'roberta_gcls_vdc_auto']:
+                                       'roberta_gcls_auto']:
                 input_ids = input_ids.to(self.opt.device)
                 if data_type == 'validation':
                     extended_att_mask = list(self.validation_extended_attention_mask[all_input_guids].transpose(0,1))
@@ -729,8 +813,21 @@ class Instructor:
                                               extended_attention_mask = extended_att_mask,
                                               VDC_info = eval_VDC_info, DEP_info = eval_DEP_info, use_DEP = args.use_DEP)[:2]
                     loss, logits = output_[:2]
-                
-                                
+                    
+                elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
+                    sg_loss, auto_att_scores, auto_att_scores_tok, output_ = self.model(input_ids, labels = label_ids,
+                                                  extended_attention_mask = extended_att_mask,
+                                                  VDC_info = eval_VDC_info, DEP_info = eval_DEP_info, use_DEP = args.use_DEP,
+                                                  auto_layers = args.auto_layers, do_auto = args.do_auto,
+                                                  temperature = args.temperature, auto_type = args.auto_type)[:4]
+                    loss, logits = output_[:2]
+                    
+                    if auto_vdc_att_scores == None:
+                        auto_vdc_att_scores = auto_att_scores
+                        auto_vdc_att_scores_tok = auto_att_scores_tok
+                    else:
+                        auto_vdc_att_scores = torch.cat((auto_vdc_att_scores, auto_att_scores), dim=0)
+                        auto_vdc_att_scores_tok = torch.cat((auto_vdc_att_scores_tok, auto_att_scores_tok), dim=0)
                 else:
                     input_t_ids = input_t_ids.to(self.opt.device)
                     input_t_mask = input_t_mask.to(self.opt.device)
@@ -812,8 +909,9 @@ class Instructor:
         
         eval_loss = eval_loss / nb_eval_steps
         
-        
         eval_accuracy = eval_accuracy / nb_eval_examples
+        
+        # auto_vdc_att_scores.size() = torch.Size([638, 12, 12])
         
         if data_type == 'validation':
             validation_increased = False
@@ -834,28 +932,32 @@ class Instructor:
                     print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
                     print('='*77)
         else:
-#             if ss and eval_accuracy > 0.84:
-#                 print('Got 420 correct!')
-#                 torch.save(self.model.state_dict(), self.opt.model_save_path+f'/best_acc_{eval_accuracy}.pkl') 
-#                 torch.save(eval_vdc, f'./analysis/{self.global_step}_eval_vdc.pt')
                     
             validation_increased = False
             if eval_accuracy > self.max_test_acc_INC:
                 validation_increased = True
                 self.max_test_acc_INC = eval_accuracy
-                if self.max_test_acc_INC > 0.85 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_acc.pkl')
+                
+                if eval_accuracy > 0.88 and auto_vdc_att_scores_tok != None:
+                    with open(f'./analysis/auto_vdc_att_scores_seed_{self.opt.seed}_{self.global_step}.pkl', 'wb') as file:
+                        pickle.dump(auto_vdc_att_scores, file)
+                    with open(f'./analysis/auto_vdc_att_scores_tok_seed_{self.opt.seed}_{self.global_step}.pkl', 'wb') as file:
+                        pickle.dump(auto_vdc_att_scores_tok, file)
+                
+                if self.max_test_acc_INC > 0.89 and self.opt.do_save == True:
+                    torch.save(self.model.state_dict(), self.opt.model_save_path+f'/{args.seed}_best_acc.pkl')
                     print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + '/best_acc.pkl')
+                    print('model saved at: ', self.opt.model_save_path + f'/{args.seed}_best_acc.pkl')
                     print('='*77)
+                    
             if test_f1 > self.max_test_f1_INC:
                 validation_increased = True
                 self.max_test_f1_INC = test_f1
-                if self.max_test_f1_INC > 0.815 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
-                    print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
-                    print('='*77)
+#                 if self.max_test_f1_INC > 0.815 and self.opt.do_save == True:
+#                     torch.save(self.model.state_dict(), self.opt.model_save_path+'/best_f1.pkl')
+#                     print('='*77)
+#                     print('model saved at: ', self.opt.model_save_path + '/best_f1.pkl')
+#                     print('='*77)
 
         result = {'eval_loss': eval_loss,
                   'eval_accuracy': eval_accuracy,
@@ -948,6 +1050,7 @@ if __name__ == "__main__":
         'roberta': RobertaForSequenceClassification,
         'roberta_td': RobertaForSequenceClassification_TD,
         'roberta_gcls': RobertaForSequenceClassification_gcls,
+        'roberta_gcls_auto': RobertaForSequenceClassification_gcls_auto,
         'clstm': CLSTM,
         'pf_cnn': PF_CNN,
         'tcn': TCN,
