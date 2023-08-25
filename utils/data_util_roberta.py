@@ -46,7 +46,6 @@ class ReadData:
         self.train_raw = train_raw.readlines()
         
         self.opt = opt
-        assert 'bert_' not in self.opt.model_name
         self.train_examples = opt.processor.get_train_examples(opt.data_dir)
         self.eval_examples = opt.processor.get_dev_examples(opt.data_dir)
         if opt.task_name == 'mams':
@@ -59,7 +58,7 @@ class ReadData:
             self.tokenizer = tokenization_roberta.FullTokenizer(vocab_file=opt.vocab_file, do_lower_case=opt.do_lower_case)
         ######################
         print('-'*100)
-        print("Combining with dataloader from DGEDT (e.g. elements like dependency graphs are needed).")
+        print("Combining with dataloader from DGEDT (e.g. elements like dependency graphs).")
         print('-'*100)
         if opt.task_name == 'laptop':
             dgedt_dataset = 'lap14'
@@ -76,7 +75,6 @@ class ReadData:
         elif 'roberta' in self.opt.model_name:
             absa_dataset=pickle.load(open(dgedt_dataset+'_datas_roberta_'+ self.opt.parser_info+ '.pkl', 'rb'))
             self.absa_dataset = pickle.load(open(dgedt_dataset+'_datas_roberta_'+ self.opt.parser_info+ '.pkl', 'rb'))
-            
             
         if 'spacy_sm' in self.opt.parser_info:
             self.nlp = spacy.load('en_core_web_sm')
@@ -99,7 +97,11 @@ class ReadData:
         print('-'*77)
         print(f"* Loaded global edge vocab from {'./datasets/' + self.opt.parser_info + '.global_edge_vocab'}")
         print(f"* Loaded global pos vocab from {'./datasets/' + self.opt.parser_info + '.global_pos_vocab'}")
-            
+           
+        print('-'*77)
+        print('POS_vocab: ', self.pos_vocab)
+        print('-'*77)
+        
         if os.path.exists(f'./datasets/{self.opt.parser_info}_global_DEP_info_emb'):
             with open(f'./datasets/{self.opt.parser_info}_global_DEP_info_emb', 'rb') as file:
                 self.dep_vocab = pickle.load(file)
@@ -107,35 +109,35 @@ class ReadData:
             self.dep_vocab = {'None': 0, '[s] or [CLS]': 1, '[g]': 2}
             self.create_new_global_dep()
                 
-        self.dep2idx = {}
+        self.idx2dep = {}
         for key in self.dep_vocab.keys():
-            self.dep2idx[self.dep_vocab[key]] = key     
+            self.idx2dep[self.dep_vocab[key]] = key     
             
-        print('self.dep2idx: ', self.dep2idx)
+        print('self.idx2dep: ', self.idx2dep)
+        print('-'*77)
+        
         self.train_data_loader = BucketIterator(data=absa_dataset.train_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=True, input_format = self.opt.input_format, model_name = self.opt.model_name)
         self.test_data_loader = BucketIterator(data=absa_dataset.test_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format, model_name = self.opt.model_name)
         if opt.task_name == 'mams':
             self.eval_data_loader = BucketIterator(data=absa_dataset.validation_data, batch_size=100000, max_seq_length = self.opt.max_seq_length, shuffle=False, input_format = self.opt.input_format, model_name = self.opt.model_name)
         
         self.DGEDT_train_data = self.train_data_loader.data
-        
-        
         self.DGEDT_train_batches = self.train_data_loader.batches
         
         self.DGEDT_test_data = self.test_data_loader.data
         self.DGEDT_test_batches = self.test_data_loader.batches
         
-#         laptop_eval_text = []
-#         laptop_eval_aspect = []
+#         eval_text = []
+#         eval_aspect = []
 #         for i in range(len(self.DGEDT_test_data)):
-#             laptop_eval_text.append(self.DGEDT_test_data[i]['text'])
-#             laptop_eval_aspect.append(self.DGEDT_test_data[i]['aspect'])
+#             eval_text.append(self.DGEDT_test_data[i]['text'])
+#             eval_aspect.append(self.DGEDT_test_data[i]['aspect'])
         
-#         with open('./analysis/laptop_eval_text.pkl', 'wb') as file:
-#             pickle.dump(laptop_eval_text, file)
+#         with open(f'./analysis/rest_eval_text.pkl', 'wb') as file:
+#             pickle.dump(eval_text, file)
             
-#         with open('./analysis/laptop_eval_aspect.pkl', 'wb') as file:
-#             pickle.dump(laptop_eval_aspect, file)
+#         with open('./analysis/rest_eval_aspect.pkl', 'wb') as file:
+#             pickle.dump(eval_aspect, file)
         
         if opt.task_name == 'mams':
             self.DGEDT_validation_data = self.eval_data_loader.data
@@ -143,17 +145,17 @@ class ReadData:
         
             
         self.train_gcls_attention_mask, _, _, self.train_VDC_info, self.train_DEP_info, \
-        self.train_POS_info, self.train_hVDC, _ = \
+        self.train_POS_info, self.train_hVDC = \
         self.process_DG(self.DGEDT_train_data, data_type = 'train_data')
         
         
         self.eval_gcls_attention_mask, _, _,self.eval_VDC_info, self.eval_DEP_info, \
-        self.eval_POS_info, self.eval_hVDC, _ = \
+        self.eval_POS_info, self.eval_hVDC = \
         self.process_DG(self.DGEDT_test_data, data_type = 'eval_data')
         
         if opt.task_name == 'mams':
             self.validation_gcls_attention_mask, _, _, self.validation_VDC_info, \
-            self.validation_DEP_info, self.validation_POS_info, self.validation_hVDC, _ \
+            self.validation_DEP_info, self.validation_POS_info, self.validation_hVDC \
             = self.process_DG(self.DGEDT_validation_data, data_type = 'validation_data')
                 
         ######################
@@ -170,11 +172,7 @@ class ReadData:
         
         if opt.task_name == 'mams':
             self.validation_data, self.validation_dataloader, self.validation_tran_indices, self.validation_span_indices, \
-            self.validation_extended_attention_mask, self.validation_current_VDC= self.get_data_loader(examples=self.validation_examples, 
-                                                                      type='validation',
-                                                                      gcls_attention_mask = self.validation_gcls_attention_mask,
-                                                                      hVDC = self.validation_hVDC)
-            
+            self.validation_extended_attention_mask, self.validation_current_VDC= self.get_data_loader(examples=self.validation_examples, type='validation', gcls_attention_mask = self.validation_gcls_attention_mask, hVDC = self.validation_hVDC)
             
     def create_new_global_dep(self):
         for dataset in ['lap14', 'rest14', 'twitter', 'mams']:
@@ -295,7 +293,7 @@ class ReadData:
         
         # Just in case we might need to use VDC_info in word level (e.g., hVDC).
         number_of_words_L = torch.zeros((len(DGEDT_train_data), 12), dtype=torch.float) # distance L에 몇 개의 word
-        
+#         number_of_tokens_L = torch.zeros((len(DGEDT_train_data), 12), dtype=torch.float) # distance L에 몇 개의 token
         
         for i in range(len(DGEDT_train_data)):
             AOBG_label.append({})
@@ -314,7 +312,7 @@ class ReadData:
             total_tokens.append(sep_pos-2)
             second_g_idx.append(sep_pos+1)
             total_words.append(dg.size(0))
-            
+
 #             if len(DGEDT_train_data[i]['span_indices']) != 1:
 #                 print('Multiple same aspects in the sentence : ', i)
             assert len(DGEDT_train_data[i]['span_indices']) == 1 # For Lap14, Rest14, and MAMS.
@@ -335,7 +333,6 @@ class ReadData:
             # might need to change this when using Twitter since there could be multiple aspects.
             
             ## Initialize AOBG labels
-            AOBG_label.append({})
             
             # 나중에 지울 것들 
             assert dg.size(0) == len(DGEDT_train_data[i]['tran_indices'])
@@ -389,7 +386,9 @@ class ReadData:
                     AOBG_label[i][item]['dep_label'] = 'self' 
                     used_trans.append(item)
                     last_trans.append(item)
-                    
+
+#                     number_of_tokens_L 여기 나중에 고치기
+
             hVDC_found = False # word-level hVDC
             hVDC_found_token = False # token-level hVDC
             
@@ -402,13 +401,23 @@ class ReadData:
                       'intj': 'dep', 'case': 'dep', 'oprd': 'arg', 'csubj': 'sbj', 'parataxis': 'dep', 'agent': 'arg',
                       'preconj': 'mod', 'meta': 'dep'}
             
+            if (number_of_words_L[i][0]/total_words[i] >= self.opt.VDC_threshold) and hVDC_found == False:
+                hVDC_found = True
+                hVDC_word.append(0)
+                    
             for l in range(1, 12):
                 last_trans_ = [] 
                 number_of_words_L[i][l] = number_of_words_L[i][l-1] # 누적으로 하는게 편할 듯.
+#                 number_of_tokens_L[i][l] = number_of_tokens_L[i][l-1]
                 for item in last_trans:
                     x = (dg[item] == 1).nonzero(as_tuple=True)[0]
                     for item_ in x:
                         if int(item_) not in used_trans:
+                            
+#                             # POS-guided?
+#                             if AOBG_label[i][int(item_)]['pos_tag'] in [3,8]:
+#                                 continue
+                                
                             used_trans.append(int(item_))
                             last_trans_.append(int(item_))
                             number_of_words_L[i][l] += 1
@@ -439,7 +448,8 @@ class ReadData:
                                 print('Something wrong')
                                 
                 last_trans = last_trans_
-                if (number_of_words_L[i][l]/total_words[i] >= self.opt.VDC_threshold) and hVDC_found == False:
+                    
+                if (number_of_words_L[i][l]/total_words[i] > self.opt.VDC_threshold) and hVDC_found == False:
                     hVDC_found = True
                     hVDC_word.append(l)
                     
@@ -448,6 +458,11 @@ class ReadData:
                 
             if hVDC_found_token == False:
                 hVDC_token.append(11)
+                
+#             print('total_words[i]: ', total_words[i])
+#             print('number_of_words_L[i]: ', number_of_words_L[i])
+#             print('hVDC_word[i]: ', hVDC_word[i])
+#             print('-'*77)
                             
             for word in range(len(AOBG_label[i])):
                 start = AOBG_label[i][word]['token_idx_start']
@@ -528,20 +543,20 @@ class ReadData:
                     gcls_attention_mask[i][j][1] = 1.0
                     gcls_attention_mask_surface_distance_word_level[i][j][1] = 1.0
                     gcls_attention_mask_surface_distance_token_level[i][j][1] = 1.0
-            
-            
+
+
 #         print('='*77)
 #         print('reporting DG statistics')
-        
+
 #         total_toks = 0
 #         total_trans = 0
 #         self.R_tokens = torch.zeros((12, 1), dtype = torch.float)
 #         self.R_trans = torch.zeros((12, 1), dtype = torch.float)
-        
+
 #         for i in range(len(DGEDT_train_data)):
 #             total_toks += total_tokens[i]
 #             total_trans += len(DGEDT_train_data[i]['dependency_graph'][0])
-            
+
 #             for j in range(12):
 # #                 print(f'VDC {j} tokens: ', torch.sum(gcls_attention_mask[i][j][0]))
 #                 x = (gcls_attention_mask[i][j][0] == 1).nonzero(as_tuple=True)[0]
@@ -549,19 +564,21 @@ class ReadData:
 # #                 print('-'*77)
 #                 self.R_tokens[j] += torch.sum(gcls_attention_mask[i][j][0])
 #                 self.R_trans[j] += len(cumul_DG_words[i][j])
-                
+
 # #             for j in range(5+1):
 # #                 for k in range(path_types):
 # #                     R_tokens[j,k] += torch.sum(gcls_attention_mask[i][j][k])
-                    
+
 #         for i in range(12):
 #             print('-'*77)
 #             print('Range: ', i)
 #             print(f'portion of tokens in range {i} / path type {j}: ', self.R_tokens[i] / total_toks)
 #             print(f'portion of words in range {i} / path type {j}: ', self.R_trans[i] / total_trans)
-            
-                
-        return gcls_attention_mask, gcls_attention_mask_surface_distance_word_level, gcls_attention_mask_surface_distance_token_level, VDC_info, DEP_info, POS_info, hVDC_word, hVDC_token
+
+#         with open('./analysis/number_of_words_L.pkl', 'wb') as file:
+#             pickle.dump(number_of_words_L, file)
+        
+        return gcls_attention_mask, gcls_attention_mask_surface_distance_word_level, gcls_attention_mask_surface_distance_token_level, VDC_info, DEP_info, POS_info, hVDC_word
 
             
     def get_data_loader(self, examples, type='train_data', gcls_attention_mask=None, hVDC=None):
@@ -702,6 +719,7 @@ class ReadData:
                         extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
                 
         elif self.opt.use_hVDC == False:
+            print('sssss')
             for i in range(all_input_ids.size(0)):
                 if self.opt.do_auto == True:
                     current_VDC[i][:] = torch.tensor([0,1,2,3,4,5,6,7,8,9,10,11], dtype = torch.float)
@@ -980,7 +998,7 @@ class ReadData:
             else:
                 tokens_b.pop()
 
-                
+
 class DataProcessor(object):
     """Base class for data converters for sequence classification data sets."""
 
