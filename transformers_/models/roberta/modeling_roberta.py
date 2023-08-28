@@ -345,7 +345,7 @@ class RobertaSelfAttention(nn.Module):
 
 # Copied from transformers.models.bert.modeling_bert.BertSelfAttention with Bert->Roberta
 class RobertaSelfAttention_gcls(nn.Module):
-    def __init__(self, config, position_embedding_type=None):
+    def __init__(self, config, position_embedding_type=None, use_DEP = False):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
@@ -371,17 +371,21 @@ class RobertaSelfAttention_gcls(nn.Module):
 
         self.is_decoder = config.is_decoder
         
-        
-        self.tanh = nn.Tanh()
-        self.W1 = nn.Linear(300, config.hidden_size)
-        self.centroid = nn.Linear(config.hidden_size, config.hidden_size)
-        self.att_pool_dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.use_DEP = use_DEP
+        if self.use_DEP:
+            self.tanh = nn.Tanh()
+            self.W1 = nn.Linear(300, config.hidden_size)
+            self.centroid = nn.Linear(config.hidden_size, 1)
+            self.att_pool_dense = nn.Linear(config.hidden_size, config.hidden_size)
         
 #         self.g0 = nn.Parameter(torch.FloatTensor(1, 768))
 #         self.g0.data.uniform_(-1, 1)
         
-        self.g0 = nn.Linear(2*config.hidden_size, config.hidden_size)
-        self.g0.weight.data.uniform_(-1, 1)
+            self.g0 = nn.Linear(2*config.hidden_size, 1)
+            self.g0.weight.data.uniform_(-1, 1)
+            self.sigmoid = nn.Sigmoid()
+        
+            self.DEP = nn.Embedding(1000, 300, padding_idx = 0)
         ######## 
         
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
@@ -449,12 +453,15 @@ class RobertaSelfAttention_gcls(nn.Module):
                 print(tokenizer.convert_ids_to_tokens(input_for_detail[0][detail_vdc_tokens]))
                 
             # 1. DEP 정보를 반영.
-            dep_emb = DEP(DEP_info)
+            dep_emb = self.DEP(DEP_info)
 #             dep_emb = POS(POS_info)
 #             dep_emb = DEP(VDC_info)
                 
-            hidden_states_g = self.tanh(hidden_states + self.W1(dep_emb))
-            
+            hidden_states_g = self.tanh(self.W1(dep_emb))
+#             att_score_rel = nn.Softmax(dim=-1)(self.sigmoid(self.W2(self.tanh(self.W1(dep_emb))))).view(-1,128) # [32, 128] 
+    
+#             context_layer_g = torch.matmul(att_score_rel.unsqueeze(1), self.value(hidden_states_g)).view(-1, 768)
+                                           
             mixed_query_layer_g = self.query(hidden_states)
             mixed_key_layer_g = self.key(hidden_states_g)
             mixed_value_layer_g = self.value(hidden_states)
@@ -479,10 +486,13 @@ class RobertaSelfAttention_gcls(nn.Module):
             
 #             context_layer[range(hidden_states.size(0)),zz] = self.g0.data[0,:]*context_layer_g[range(hidden_states.size(0)), zz] + (1-self.g0.data[0,:]) * context_layer[range(hidden_states.size(0)),zz] 
             
-            gg = self.g0(hidden_states[:, :2].reshape(-1, 2*768))
-            context_layer[range(hidden_states.size(0)),zz] = gg*context_layer_g[range(hidden_states.size(0)), zz] + (1-gg) * context_layer[range(hidden_states.size(0)),zz]
             
-
+            gg = self.sigmoid(self.g0(torch.cat((context_layer_g[range(hidden_states.size(0)), zz],
+                                    context_layer[range(hidden_states.size(0)),zz]), dim= 1)))
+                                           
+            context_layer[range(hidden_states.size(0)),zz] = gg*context_layer_g[range(hidden_states.size(0)), zz] + (1-gg) * context_layer[range(hidden_states.size(0)),zz]
+        
+        
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
         
         return outputs
@@ -557,9 +567,9 @@ class RobertaAttention(nn.Module):
     
 # Copied from transformers.models.bert.modeling_bert.BertAttention with Bert->Roberta
 class RobertaAttention_gcls(nn.Module):
-    def __init__(self, config, position_embedding_type=None):
+    def __init__(self, config, position_embedding_type=None, use_DEP = False):
         super().__init__()
-        self.self = RobertaSelfAttention_gcls(config, position_embedding_type=position_embedding_type)
+        self.self = RobertaSelfAttention_gcls(config, position_embedding_type=position_embedding_type, use_DEP = use_DEP)
         self.output = RobertaSelfOutput(config)
         self.pruned_heads = set()
 
@@ -676,7 +686,7 @@ class RobertaLayer(nn.Module):
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
         VDC_info = None,
-        forward_type = None
+        forward_type = None,
     ) -> Tuple[torch.Tensor]:
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -727,6 +737,7 @@ class RobertaLayer(nn.Module):
         layer_output = apply_chunking_to_forward(
             self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
         )
+        
         outputs = (layer_output,) + outputs
 
         # if decoder, return the attn key/values as the last output
@@ -738,16 +749,17 @@ class RobertaLayer(nn.Module):
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
+        
         return layer_output
         
     
 # Copied from transformers.models.bert.modeling_bert.BertLayer with Bert->Roberta
 class RobertaLayer_gcls(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, use_DEP = False):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = RobertaAttention_gcls(config)
+        self.attention = RobertaAttention_gcls(config, use_DEP = use_DEP)
         self.is_decoder = config.is_decoder
         self.add_cross_attention = config.add_cross_attention
         if self.add_cross_attention:
@@ -756,6 +768,7 @@ class RobertaLayer_gcls(nn.Module):
             self.crossattention = RobertaAttention(config, position_embedding_type="absolute")
         self.intermediate = RobertaIntermediate(config)
         self.output = RobertaOutput(config)
+        
         
     def forward(
         self,
@@ -830,6 +843,7 @@ class RobertaLayer_gcls(nn.Module):
         layer_output = apply_chunking_to_forward(
             self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
         )
+        
         outputs = (layer_output,) + outputs
 
         # if decoder, return the attn key/values as the last output
@@ -945,13 +959,13 @@ class RobertaEncoder(nn.Module):
 
     
 class RobertaEncoder_gcls(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, use_DEP = False):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([RobertaLayer_gcls(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([RobertaLayer_gcls(config, use_DEP = use_DEP) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
         self.DEP = nn.Embedding(1000, 300, padding_idx = 0)
-
+        
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -1170,6 +1184,7 @@ class RobertaPooler_gcls(nn.Module):
         elif self.g_pooler in ['s_g_new_2']:
             self.g0 = nn.Linear(2*config.hidden_size, config.hidden_size)
             self.g0.weight.data.uniform_(-1, 1)
+            self.sigmoid = nn.Sigmoid()
             
         elif self.g_pooler in ['s_g_new_3']:
             self.g0 = nn.Linear(config.hidden_size, config.hidden_size)
@@ -1270,13 +1285,15 @@ class RobertaPooler_gcls(nn.Module):
             final_output = self.activation(final_output)
             
         elif self.g_pooler == 's_g_ec':
-            index = VDC_info == 999 # g infront of X
-            index = index.long()
-            mask = index.unsqueeze(2)
-            g_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
+#             index = VDC_info == 999 # g infront of X
+#             index = index.long()
+#             mask = index.unsqueeze(2)
+#             g_vector = (hidden_states*mask).sum(dim=1)/mask.sum(dim=1)
             
-            full_vector = torch.cat((hidden_states[:,0].unsqueeze(1), g_vector.unsqueeze(1)),
-                                    dim=1)
+#             full_vector = torch.cat((hidden_states[:,0].unsqueeze(1), g_vector.unsqueeze(1)),
+#                                     dim=1)
+            
+            full_vector = hidden_states[:, :2]
             
             return self.ec_pool(full_vector, self.dense_ec)
         
@@ -2072,12 +2089,12 @@ class RobertaModel_gcls(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     # Copied from transformers.models.bert.modeling_bert.BertModel.__init__ with Bert->Roberta
-    def __init__(self, config, g_pooler, add_pooling_layer=True):
+    def __init__(self, config, g_pooler, add_pooling_layer=True, use_DEP = False):
         super().__init__(config)
         self.config = config
 
         self.embeddings = RobertaEmbeddings(config)
-        self.encoder = RobertaEncoder_gcls(config)
+        self.encoder = RobertaEncoder_gcls(config, use_DEP = use_DEP)
         
         self.pooler = RobertaPooler_gcls(config, g_pooler) if add_pooling_layer else None
 
@@ -2643,13 +2660,13 @@ class RobertaForSequenceClassification(RobertaPreTrainedModel):
 class RobertaForSequenceClassification_gcls(RobertaPreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
-    def __init__(self, config, g_pooler, pb=None):
+    def __init__(self, config, g_pooler, pb=None, use_DEP = False):
         super().__init__(config)
         config.num_labels = 3
         self.num_labels = config.num_labels
         self.config = config
 
-        self.roberta = RobertaModel_gcls(config, add_pooling_layer=True, g_pooler = g_pooler)
+        self.roberta = RobertaModel_gcls(config, add_pooling_layer=True, g_pooler = g_pooler, use_DEP = use_DEP)
         self.classifier = RobertaClassificationHead_gcls(config)
 
         # Initialize weights and apply final processing
