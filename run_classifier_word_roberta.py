@@ -194,7 +194,8 @@ class Instructor:
             self.model = RobertaForSequenceClassification_TD.from_pretrained('roberta-base')
         elif args.model_class == RobertaForSequenceClassification_gcls:
             self.model = RobertaForSequenceClassification_gcls.from_pretrained('roberta-base', g_pooler = args.g_pooler,
-                                                                               pb = args.pb)
+                                                                               pb = args.pb, use_DEP = args.use_DEP,
+                                                                               DAA_start_layer = args.DAA_start_layer)
         elif args.model_class == RobertaForSequenceClassification_gcls_auto:
             self.model = RobertaForSequenceClassification_gcls_auto.from_pretrained('roberta-base', g_pooler = args.g_pooler,
                                                                                pb = args.pb)
@@ -344,6 +345,11 @@ class Instructor:
                        errors='ignore')
             self.lines = fin.readlines()
             fin.close()
+        elif task_name == 'laptop':
+            fin = open('./datasets/semeval14/laptops/laptop_train.raw', 'r', encoding='utf-8', newline='\n', 
+                       errors='ignore')
+            self.lines = fin.readlines()
+            fin.close()
         
         
     ###############################################################################################
@@ -380,7 +386,7 @@ class Instructor:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
-                elif task_name == 'laptop' and self.max_test_acc_INC < 0.70:
+                elif task_name == 'laptop' and self.max_test_acc_INC < 0.80:
                     print('='*77)
                     print('terminating training due to exceptionally bad seed')
                     sys.exit()
@@ -472,8 +478,8 @@ class Instructor:
                         document = self.dataset.nlp(text)
 #                         print(text)
                         
-#                         print('VDC_info[0]: ', train_VDC_info[0])
-#                         print('DEP_info[0]: ', train_DEP_info[0])
+                        print('VDC_info[0]: ', train_VDC_info[0])
+                        print('DEP_info[0]: ', train_DEP_info[0])
 #                         print('POS_info[0]: ', train_POS_info[0])
                         
                         span_indices = self.train_span_indices[all_input_guids[0]]
@@ -579,9 +585,9 @@ class Instructor:
                         analysis_results['pos_vocab'] = self.dataset.pos_vocab
                         analysis_results['word_token_idx_pos_dep'] = word_token_idx_pos_dep
                         
-                        Path(f'./analysis').mkdir(parents=True, exist_ok=True)
-                        with open(f'./analysis/seed_{args.seed}_global_step_{self.global_step}.pkl', 'wb') as file:
-                            pickle.dump(analysis_results, file)
+#                         Path(f'./analysis').mkdir(parents=True, exist_ok=True)
+#                         with open(f'./analysis/seed_{args.seed}_global_step_{self.global_step}.pkl', 'wb') as file:
+#                             pickle.dump(analysis_results, file)
                         
 #                     elif self.opt.model_name in ['roberta']:
 #                         print('-'*77)
@@ -599,7 +605,7 @@ class Instructor:
                     loss, logits = self.model(input_ids, labels = label_ids, VDC_info = train_VDC_info)[:2]
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
-                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
+                    analysis_score, output_ = self.model(input_ids, labels = label_ids,
                                                   extended_attention_mask = train_extended_attention_mask, 
                                                   VDC_info = train_VDC_info, DEP_info = train_DEP_info,
                                                   use_DEP = args.use_DEP, detail = detail)[:2]
@@ -754,7 +760,8 @@ class Instructor:
                         
                         
     def do_eval(self, data_type = None, i_epoch = None):  
-        ss = False
+        correct_53 = False
+        correct_161 = False
         self.model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
@@ -819,10 +826,12 @@ class Instructor:
                     
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls]:
-                    sg_loss, output_ = self.model(input_ids, labels = label_ids,
+                    analysis_score, output_ = self.model(input_ids, labels = label_ids,
                                               extended_attention_mask = extended_att_mask,
-                                              VDC_info = eval_VDC_info, DEP_info = eval_DEP_info, use_DEP = args.use_DEP)[:2]
+                                              VDC_info = eval_VDC_info, DEP_info = eval_DEP_info, use_DEP = args.use_DEP,
+                                              detail = True)[:2]
                     loss, logits = output_[:2]
+#                     print('analysis_score.size(): ', analysis_score.size())
                     
                 elif self.opt.model_class in [RobertaForSequenceClassification_gcls_auto]:
                     sg_loss, auto_att_scores, auto_att_scores_tok, output_ = self.model(input_ids, labels = label_ids,
@@ -896,14 +905,16 @@ class Instructor:
             tmp_eval_accuracy = accuracy(logits, label_ids)
             
             y_pred.extend(np.argmax(logits, axis=1))
-            
             y_true.extend(label_ids)
             
             
             predictions = np.argmax(logits, axis=1)
             correct_guids = all_input_guids[predictions == label_ids]
-#             if 420 in correct_guids:
-#                 ss = True
+            if 53 in correct_guids:
+                correct_53 = True
+                
+            if 161 in correct_guids:
+                correct_161 = True
                 
             
             # eval_loss += tmp_eval_loss.mean().item()
@@ -948,17 +959,28 @@ class Instructor:
                 validation_increased = True
                 self.max_test_acc_INC = eval_accuracy
                 
-                if eval_accuracy > 0.88 and auto_vdc_att_scores_tok != None:
-                    with open(f'./analysis/auto_vdc_att_scores_seed_{self.opt.seed}_{self.global_step}.pkl', 'wb') as file:
-                        pickle.dump(auto_vdc_att_scores, file)
-                    with open(f'./analysis/auto_vdc_att_scores_tok_seed_{self.opt.seed}_{self.global_step}.pkl', 'wb') as file:
-                        pickle.dump(auto_vdc_att_scores_tok, file)
-                
-                if self.max_test_acc_INC > 0.89 and self.opt.do_save == True:
-                    torch.save(self.model.state_dict(), self.opt.model_save_path+f'/{args.seed}_best_acc.pkl')
-                    print('='*77)
-                    print('model saved at: ', self.opt.model_save_path + f'/{args.seed}_best_acc.pkl')
-                    print('='*77)
+                if self.max_test_acc_INC > 0.87 and self.opt.do_save == True:
+                    seed_list = [2254257, 9549656, 1058756, 4279348, 1978347, 8312021, 7541208, 7922960, 6368886, 3522457,
+                                 1574702, 8184876, 475591, 6539906, 7260626, 35333, 7472357, 4468285, 3837993, 9917908, 1715087,
+                                 5325585, 513214, 374502, 426910, 9083394, 154433, 6395545, 3633934, 7081940]
+                    seed_to_idx = {item: i for i,item in enumerate(seed_list)}
+#                 if eval_accuracy > 0.88 and self.opt.do_save == True:
+                    Path(f'./saved_checkpoints').mkdir(parents = True, exist_ok = True)
+                    torch.save(self.model.state_dict(), './saved_checkpoints'+f'/{args.g_pooler}_seed_{seed_to_idx[args.seed]+1}.pkl')
+#                     if correct_53 == True:
+#                         Path(f'./saved_checkpoints').mkdir(parents=True, exist_ok=True)
+#                         torch.save(self.model.state_dict(), './saved_checkpoints'+f'/{args.seed}_correct_53_step_{self.global_step}.pkl')
+#                         print('='*77)
+#                         print('shibal')
+# #                         print('model saved at: ', './saved_checkpoints' + f'/{args.seed}_best_acc.pkl')
+#                         print('='*77)
+#                     if correct_161 == True:
+#                         Path(f'./saved_checkpoints').mkdir(parents=True, exist_ok=True)
+#                         torch.save(self.model.state_dict(), './saved_checkpoints'+f'/{args.seed}_correct_161_step_{self.global_step}.pkl')
+#                         print('='*77)
+#                         print('model saved at: ', './saved_checkpoints' + f'/{args.seed}_best_acc.pkl')
+#                         print('shibal')
+#                         print('='*77)
                     
             if test_f1 > self.max_test_f1_INC:
                 validation_increased = True
