@@ -10,9 +10,9 @@ from data_utils_roberta import *
 from bucket_iterator import BucketIterator
 import pickle
 from transformers import BertTokenizer, RobertaTokenizer
-
+import os
 import spacy
-
+import time
 
 def length2mask(length,maxlength):
     size=list(length.size())
@@ -144,19 +144,39 @@ class ReadData:
             self.DGEDT_validation_batches = self.eval_data_loader.batches
         
             
-        self.train_gcls_attention_mask, _, _, self.train_VDC_info, self.train_DEP_info, \
-        self.train_POS_info, self.train_hVDC = \
-        self.process_DG(self.DGEDT_train_data, data_type = 'train_data')
+        if os.path.exists(f'./Cache/{self.opt.task_name}_train_gcls_attention_mask.pt'):
+            time0 = time.time()
+            self.train_gcls_attention_mask = torch.load(f'./Cache/{self.opt.task_name}_train_gcls_attention_mask.pt')
+            self.train_VDC_info = torch.load(f'./Cache/{self.opt.task_name}_train_VDC_info.pt')
+            self.train_DEP_info = torch.load(f'./Cache/{self.opt.task_name}_train_DEP_info.pt')
+            self.train_POS_info = torch.load(f'./Cache/{self.opt.task_name}_train_POS_info.pt')
+            self.train_hVDC = torch.load(f'./Cache/{self.opt.task_name}_train_hVDC.pt')
+            
+            self.eval_gcls_attention_mask = torch.load(f'./Cache/{self.opt.task_name}_eval_gcls_attention_mask.pt')
+            self.eval_VDC_info = torch.load(f'./Cache/{self.opt.task_name}_eval_VDC_info.pt')
+            self.eval_DEP_info = torch.load(f'./Cache/{self.opt.task_name}_eval_DEP_info.pt')
+            self.eval_POS_info = torch.load(f'./Cache/{self.opt.task_name}_eval_POS_info.pt')
+            self.eval_hVDC = torch.load(f'./Cache/{self.opt.task_name}_eval_hVDC.pt')
+            
+            if self.opt.task_name == 'mams':
+                self.validation_gcls_attention_mask = torch.load(f'./Cache/{self.opt.task_name}_validation_gcls_attention_mask.pt')
+                self.validation_VDC_info = torch.load(f'./Cache/{self.opt.task_name}_validation_VDC_info.pt')
+                self.validation_DEP_info = torch.load(f'./Cache/{self.opt.task_name}_validation_DEP_info.pt')
+                self.validation_POS_info = torch.load(f'./Cache/{self.opt.task_name}_validation_POS_info.pt')
+                self.validation_hVDC = torch.load(f'./Cache/{self.opt.task_name}_validation_hVDC.pt')
+                
+            print('Time took to load the required tensors: ', time.time()-time0)
+            
+        else:
+            self.train_gcls_attention_mask, self.train_VDC_info, self.train_DEP_info, self.train_POS_info, self.train_hVDC = \
+            self.process_DG(self.DGEDT_train_data, data_type = 'train_data')
         
+            self.eval_gcls_attention_mask, self.eval_VDC_info, self.eval_DEP_info, self.eval_POS_info, self.eval_hVDC = \
+            self.process_DG(self.DGEDT_test_data, data_type = 'eval_data')
         
-        self.eval_gcls_attention_mask, _, _,self.eval_VDC_info, self.eval_DEP_info, \
-        self.eval_POS_info, self.eval_hVDC = \
-        self.process_DG(self.DGEDT_test_data, data_type = 'eval_data')
-        
-        if opt.task_name == 'mams':
-            self.validation_gcls_attention_mask, _, _, self.validation_VDC_info, \
-            self.validation_DEP_info, self.validation_POS_info, self.validation_hVDC \
-            = self.process_DG(self.DGEDT_validation_data, data_type = 'validation_data')
+            if opt.task_name == 'mams':
+                self.validation_gcls_attention_mask, self.validation_VDC_info, self.validation_DEP_info, self.validation_POS_info, self.validation_hVDC \
+                = self.process_DG(self.DGEDT_validation_data, data_type = 'validation_data')
                 
         ######################
         self.train_data, self.train_dataloader, self.train_tran_indices, self.train_span_indices, \
@@ -248,16 +268,22 @@ class ReadData:
                                 print('Something wrong')
                             elif edge_1[item][int(item_)] != 0:
                                 if l < 3:
+#                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';+'+\
+#                                                                              edge_merge[self.edge_vocab[edge_1[item]
+#                                                                                                         [int(item_)]]]
                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';+'+\
-                                                                             edge_merge[self.edge_vocab[edge_1[item]
-                                                                                                        [int(item_)]]]
+                                                                             self.edge_vocab[edge_1[item]
+                                                                                                        [int(item_)]]
                                 else:
                                     AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
                             elif edge_2[item][int(item_)] != 0:
                                 if l < 3:
+#                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';-'+\
+#                                                                              edge_merge[self.edge_vocab[edge_2[item]
+#                                                                                                         [int(item_)]]]
                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';-'+\
-                                                                             edge_merge[self.edge_vocab[edge_2[item]
-                                                                                                        [int(item_)]]]
+                                                                             self.edge_vocab[edge_2[item]
+                                                                                                        [int(item_)]]
                                 else:
                                     AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
                             else:
@@ -310,12 +336,12 @@ class ReadData:
             sep_pos = len(DGEDT_train_data[i]['text_indices']) 
             
             total_tokens.append(sep_pos-2)
-            second_g_idx.append(sep_pos+1)
+            second_g_idx.append(sep_pos+2)
             total_words.append(dg.size(0))
 
 #             if len(DGEDT_train_data[i]['span_indices']) != 1:
 #                 print('Multiple same aspects in the sentence : ', i)
-            assert len(DGEDT_train_data[i]['span_indices']) == 1 # For Lap14, Rest14, and MAMS.
+#             assert len(DGEDT_train_data[i]['span_indices']) == 1 # For Lap14, Rest14, and MAMS.
     
             target_begin_word_idx = DGEDT_train_data[i]['span_indices'][0][0] # Beginning of the target aspect in word-level.
             target_end_word_idx = DGEDT_train_data[i]['span_indices'][0][1] # End of the target aspect in word-level.
@@ -326,6 +352,8 @@ class ReadData:
             elif 'g_infront_of' in self.opt.input_format:
                 A = 2
             elif 'g' in self.opt.input_format:
+                A = 2
+            elif self.opt.input_format == 'X':
                 A = 2
                 
             target_begin_token_idx = DGEDT_train_data[i]['tran_indices'][target_begin_word_idx][0] + A
@@ -365,6 +393,8 @@ class ReadData:
                         A = 1
                 elif 'g' in self.opt.input_format:
                     A = 2
+                elif self.opt.input_format == 'X':
+                    A = 2
                 
                 AOBG_label[i][j]['token_idx_start'] = DGEDT_train_data[i]['tran_indices'][j][0]+A
                 AOBG_label[i][j]['token_idx_end'] = DGEDT_train_data[i]['tran_indices'][j][1]+A
@@ -372,7 +402,8 @@ class ReadData:
             # Now filling in the 'syn_distance', 'dep_label'
             used_trans = []
             last_trans = []
-            for k in range(len(DGEDT_train_data[i]['span_indices'])): 
+#             for k in range(len(DGEDT_train_data[i]['span_indices'])): 
+            for k in range(1): 
                 tran_start = DGEDT_train_data[i]['span_indices'][k][0]  # The starting tran_id (=word) of the target.
                 tran_end = DGEDT_train_data[i]['span_indices'][k][1]    # The ending tran_id (=word) of the target.
                 
@@ -431,17 +462,23 @@ class ReadData:
                 
                             elif edge_1[item][int(item_)] != 0:
                                 if l < 3:
+#                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';+'+\
+#                                                                              edge_merge[self.edge_vocab[edge_1[item]
+#                                                                                                         [int(item_)]]]
                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';+'+\
-                                                                             edge_merge[self.edge_vocab[edge_1[item]
-                                                                                                        [int(item_)]]]
+                                                                             self.edge_vocab[edge_1[item]
+                                                                                                        [int(item_)]]
                                 else:
                                     AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
                                     
                             elif edge_2[item][int(item_)] != 0:
                                 if l < 3:
+#                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';-'+\
+#                                                                              edge_merge[self.edge_vocab[edge_2[item]
+#                                                                                                         [int(item_)]]]
                                     AOBG_label[i][int(item_)]['dep_label'] = AOBG_label[i][int(item)]['dep_label'] +';-'+\
-                                                                             edge_merge[self.edge_vocab[edge_2[item]
-                                                                                                        [int(item_)]]]
+                                                                             self.edge_vocab[edge_2[item]
+                                                                                                        [int(item_)]]
                                 else:
                                     AOBG_label[i][int(item_)]['dep_label'] = f'{l}_con'
                             else:
@@ -486,7 +523,7 @@ class ReadData:
                 # 3. DEP_info
                 if AOBG_label[i][word]['dep_label'] not in self.dep_vocab:
                     # 나중에 지우기.
-                    assert data_type != 'train_data'
+#                     assert data_type == 'train_data'
                     DEP_info[i][start:end] = 0
                 else:
                     DEP_info[i][start:end] = self.dep_vocab[AOBG_label[i][word]['dep_label']]
@@ -519,8 +556,22 @@ class ReadData:
                     POS_info[i][1] = len(self.pos_vocab)+1
                     POS_info[i][second_g_idx[i]] = len(self.pos_vocab) + 2 # or len(self.pos_vocab) + 1
                     
-                    DEP_info[i][0] = 0 # len(self.dep_vocab)
-                    DEP_info[i][1] = 0 # self.dep_vocab['[g]']
+                    DEP_info[i][0] = 1 # 1
+                    DEP_info[i][1] = 1 # 2
+                    DEP_info[i][second_g_idx[i]] = 0 # len(self.dep_vocab) + 1 # or self.dep_vocab['[g]']
+                    
+                    
+                elif self.opt.input_format == 'X':
+                    VDC_info[i][0] = 129
+                    VDC_info[i][1] = 999
+#                     VDC_info[i][second_g_idx[i]] = 130 # or 999
+                    
+                    POS_info[i][0] = len(self.pos_vocab)
+                    POS_info[i][1] = len(self.pos_vocab)+1
+                    POS_info[i][second_g_idx[i]] = len(self.pos_vocab) + 2 # or len(self.pos_vocab) + 1
+                    
+                    DEP_info[i][0] = 1 # len(self.dep_vocab)
+                    DEP_info[i][1] = 1 # self.dep_vocab['[g]']
                     DEP_info[i][second_g_idx[i]] = 0 # len(self.dep_vocab) + 1 # or self.dep_vocab['[g]']
                     
             
@@ -543,42 +594,23 @@ class ReadData:
                     gcls_attention_mask[i][j][1] = 1.0
                     gcls_attention_mask_surface_distance_word_level[i][j][1] = 1.0
                     gcls_attention_mask_surface_distance_token_level[i][j][1] = 1.0
-
-
-#         print('='*77)
-#         print('reporting DG statistics')
-
-#         total_toks = 0
-#         total_trans = 0
-#         self.R_tokens = torch.zeros((12, 1), dtype = torch.float)
-#         self.R_trans = torch.zeros((12, 1), dtype = torch.float)
-
-#         for i in range(len(DGEDT_train_data)):
-#             total_toks += total_tokens[i]
-#             total_trans += len(DGEDT_train_data[i]['dependency_graph'][0])
-
-#             for j in range(12):
-# #                 print(f'VDC {j} tokens: ', torch.sum(gcls_attention_mask[i][j][0]))
-#                 x = (gcls_attention_mask[i][j][0] == 1).nonzero(as_tuple=True)[0]
-# #                 print(tokenizer.convert_ids_to_tokens(torch.tensor(DGEDT_train_data[i]['text_indices'])[x-1]))
-# #                 print('-'*77)
-#                 self.R_tokens[j] += torch.sum(gcls_attention_mask[i][j][0])
-#                 self.R_trans[j] += len(cumul_DG_words[i][j])
-
-# #             for j in range(5+1):
-# #                 for k in range(path_types):
-# #                     R_tokens[j,k] += torch.sum(gcls_attention_mask[i][j][k])
-
-#         for i in range(12):
-#             print('-'*77)
-#             print('Range: ', i)
-#             print(f'portion of tokens in range {i} / path type {j}: ', self.R_tokens[i] / total_toks)
-#             print(f'portion of words in range {i} / path type {j}: ', self.R_trans[i] / total_trans)
-
-#         with open('./analysis/number_of_words_L.pkl', 'wb') as file:
-#             pickle.dump(number_of_words_L, file)
+                    
+                elif self.opt.input_format == 'X':
+                    gcls_attention_mask[i][j][1] = 1.0
+                    gcls_attention_mask_surface_distance_word_level[i][j][1] = 1.0
+                    gcls_attention_mask_surface_distance_token_level[i][j][1] = 1.0
         
-        return gcls_attention_mask, gcls_attention_mask_surface_distance_word_level, gcls_attention_mask_surface_distance_token_level, VDC_info, DEP_info, POS_info, hVDC_word
+        
+        os.makedirs('./Cache', exist_ok=True)
+        data_t = {'train_data': 'train', 'eval_data': 'eval', 'validation_data': 'validation'}
+        torch.save(gcls_attention_mask, f'./Cache/{self.opt.task_name}_{data_t[data_type]}_gcls_attention_mask.pt')
+        torch.save(VDC_info, f'./Cache/{self.opt.task_name}_{data_t[data_type]}_VDC_info.pt')
+        torch.save(DEP_info, f'./Cache/{self.opt.task_name}_{data_t[data_type]}_DEP_info.pt')
+        torch.save(POS_info, f'./Cache/{self.opt.task_name}_{data_t[data_type]}_POS_info.pt')
+        torch.save(hVDC_word, f'./Cache/{self.opt.task_name}_{data_t[data_type]}_hVDC.pt')
+            
+            
+        return gcls_attention_mask, VDC_info, DEP_info, POS_info, hVDC_word
 
             
     def get_data_loader(self, examples, type='train_data', gcls_attention_mask=None, hVDC=None):
@@ -719,7 +751,6 @@ class ReadData:
                         extended_attention_mask[i, j, 0, 1, :] =  (1 - gcls_attention_mask[i][item]) * -10000.0
                 
         elif self.opt.use_hVDC == False:
-            print('sssss')
             for i in range(all_input_ids.size(0)):
                 if self.opt.do_auto == True:
                     current_VDC[i][:] = torch.tensor([0,1,2,3,4,5,6,7,8,9,10,11], dtype = torch.float)
