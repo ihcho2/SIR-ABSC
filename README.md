@@ -31,24 +31,24 @@ To reproduce the results please follow the instructions below.
      python data_utils_roberta.py --parser_info 'spacy_sm_3.3.0'
      ```
   3. Run the following script to train a model:
-    ```
-    python run_classifier_word_roberta.py \
-    --task_name=restaurant \
-    --model_name roberta_gcls \
-    --graph_type 'dg' \
-    --input_format 'gX' \
-    --constant_vdc '0,0,0,1,1,1,2,2,2,3,3,3' \
-    --VDC_threshold 0.8 \
-    --use_hVDC True \
-    --g_pooler 's_g_new_2' \
-    --use_DEP True \
-    --DAA_start_layer -1 \
-    --do_auto False \
-    --parser_info 'spacy_sm_3.3.0' \
-    --learning_rate 2.0e-5 \
-    --num_train_epochs 30.0 \
-    --eval_start_epoch 5 \
-    ```
+     ```
+     python run_classifier_word_roberta.py \
+     --task_name=restaurant \
+     --model_name roberta_gcls \
+     --graph_type 'dg' \
+     --input_format 'gX' \
+     --constant_vdc '0,0,0,1,1,1,2,2,2,3,3,3' \
+     --VDC_threshold 0.8 \
+     --use_hVDC True \
+     --g_pooler 's_g_new_2' \
+     --use_DEP True \
+     --DAA_start_layer -1 \
+     --do_auto False \
+     --parser_info 'spacy_sm_3.3.0' \
+     --learning_rate 2.0e-5 \
+     --num_train_epochs 30.0 \
+     --eval_start_epoch 5 \
+     ```
 
 ## Citation
 If you use our work, please cite:
