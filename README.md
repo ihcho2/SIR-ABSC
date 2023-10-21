@@ -2,7 +2,7 @@
 ## Introduction
 We present a simple, but effective method to incorporate syntactic  dependency information  directly into transformer-based language models (e.g. RoBERTa) for tasks such as Aspect-Based Sentiment Classification (ABSC), where the desired  output depends on specific input tokens. In contrast to prior approaches to ABSC that capture syntax by combining language models with graph neural networks over dependency trees, our model, Syntax-Integrated RoBERTa for ABSC (SIR-ABSC) incorporates syntax directly into the language model by using a novel aggregator token. SIR-ABSC outperforms these more complex models, yielding new  state-of-the-art results on ABSC. 
 
-<img src="overall.png" width="600"> 
+<img src="Overall.png" width="600"> 
   
 ## Requirements
 * Install required dependencies via
