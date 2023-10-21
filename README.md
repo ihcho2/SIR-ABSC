@@ -7,7 +7,7 @@ We present a simple, but effective method to incorporate syntactic  dependency i
 </p>
   
 ## Requirements
-* Install required dependencies via
+Install required dependencies via
 ```
 pip install -r requirements.txt
 ```
