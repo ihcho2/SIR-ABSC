@@ -47,7 +47,7 @@ To reproduce the results please follow the instructions below.
      --parser_info 'spacy_sm_3.3.0' \
      --learning_rate 2.0e-5 \
      --num_train_epochs 30.0 \
-     --eval_start_epoch 5 \
+     --eval_start_epoch 5
      ```
 
 ## Citation
